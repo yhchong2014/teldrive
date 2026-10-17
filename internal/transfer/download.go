@@ -388,6 +388,16 @@ func (r *downloadReader) Seek(offset int64, whence int) (int64, error) {
 	return r.pos, nil
 }
 
+// StreamStats exposes per-Telegram-account transfer counters for the HTTP layer,
+// which logs them so slow bots can be identified from a single line.
+func (r *downloadReader) StreamStats() []telegramstore.AccountStreamStats {
+	provider, ok := r.session.(telegramstore.StreamStatsProvider)
+	if !ok {
+		return nil
+	}
+	return provider.StreamStats()
+}
+
 func (r *downloadReader) Close() error {
 	r.mu.Lock()
 	if r.closed {

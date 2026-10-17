@@ -229,6 +229,7 @@ func (p *DownloadClientPool) openDownloadSessionMulti(ctx context.Context, userI
 		downloadReadBuffers:  p.config.ReadBuffers,
 		downloadReadParallel: p.config.ReadParallel,
 		globalCache:          p.globalCache,
+		stats:                newStreamStats(),
 	}, nil
 }
 

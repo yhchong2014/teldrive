@@ -240,6 +240,7 @@ type gotdDownloadSession struct {
 	clients              []sessionClient
 
 	globalCache cache.Cacher
+	stats       *streamStats
 }
 
 // sessionClient is one leased Telegram account inside a download session.
@@ -294,6 +295,7 @@ func (s *GotdStorage) OpenDownloadSession(ctx context.Context, userID int64) (Do
 		downloadReadBuffers:  s.downloadReadBuffers,
 		downloadReadParallel: s.downloadReadParallel,
 		globalCache:          s.globalCache,
+		stats:                newStreamStats(),
 	}
 	go func() {
 		err := runWithConnections(sessionCtx, s.runner, userID, OperationDownload, s.downloadReadParallel, func(runCtx context.Context, api *tg.Client) error {
@@ -348,6 +350,7 @@ func (s *gotdDownloadSession) OpenRange(ctx context.Context, request RangeReques
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
 	reader := newTelegramRangeReader(streamCtx, cancel, s.downloadReadBuffers, s.downloadReadParallel, s.globalCache)
+	reader.stats = s.stats
 	go func() {
 		primary := clients[0]
 		location, size, locationErr := fetchDocumentLocation(WithClientID(streamCtx, primary.clientID), primary.api, request.ChannelID, request.MessageID, s.globalCache)
@@ -398,6 +401,11 @@ func (s *gotdDownloadSession) client() (*tg.Client, error) {
 	return s.api, nil
 }
 
+// StreamStats reports per-account counters for this download session.
+func (s *gotdDownloadSession) StreamStats() []AccountStreamStats {
+	return s.stats.snapshot()
+}
+
 func (s *gotdDownloadSession) Close() error {
 	var err error
 	s.close.Do(func() {
@@ -434,6 +442,7 @@ type telegramRangeReader struct {
 	timeout    time.Duration
 	attempts   int
 	cache      cache.Cacher
+	stats      *streamStats
 }
 
 type telegramRangeBuffer struct {
@@ -567,6 +576,7 @@ func (r *telegramRangeReader) fill(ctx context.Context, clients []rangeClient, r
 
 			var response tg.UploadFileClass
 			var err error
+			chunkStarted := time.Now()
 			for range r.attempts {
 				attemptCtx, attemptCancel := context.WithTimeout(fetchCtx, r.timeout)
 				response, err = download(attemptCtx, usedLocation)
@@ -600,6 +610,17 @@ func (r *telegramRangeReader) fill(ctx context.Context, clients []rangeClient, r
 				result.err = io.ErrUnexpectedEOF
 			} else {
 				result.payload = file.Bytes[plan.skip:end]
+				elapsed := time.Since(chunkStarted)
+				r.stats.record(client.clientID, int64(len(result.payload)), elapsed)
+				if slog.Default().Enabled(ctx, slog.LevelDebug) {
+					slog.DebugContext(ctx, "telegram.download_chunk",
+						"account_id", client.clientID,
+						"offset", plan.offset,
+						"bytes", len(result.payload),
+						"elapsed_ms", elapsed.Milliseconds(),
+						"mbps", chunkMBps(len(result.payload), elapsed),
+					)
+				}
 			}
 			select {
 			case completed <- result:
@@ -644,6 +665,13 @@ func (r *telegramRangeReader) fill(ctx context.Context, clients []rangeClient, r
 		}
 	}
 	return nil
+}
+
+func chunkMBps(bytes int, elapsed time.Duration) float64 {
+	if elapsed <= 0 {
+		return 0
+	}
+	return float64(bytes) / elapsed.Seconds() / (1 << 20)
 }
 
 func planTelegramReads(offset, remaining int64, count int) []telegramReadPlan {

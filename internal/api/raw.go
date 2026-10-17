@@ -17,6 +17,7 @@ import (
 	"github.com/tgdrive/teldrive/v2/internal/api/gen"
 	"github.com/tgdrive/teldrive/v2/internal/db/sqlcgen"
 	"github.com/tgdrive/teldrive/v2/internal/dbtypes"
+	"github.com/tgdrive/teldrive/v2/internal/telegramstore"
 	"github.com/tgdrive/teldrive/v2/internal/transfer"
 )
 
@@ -164,13 +165,63 @@ func (h *RawHandler) streamFile(ctx context.Context, w http.ResponseWriter, user
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(status)
 	writer := &firstByteWriter{ResponseWriter: w, started: openStarted, fileID: fileID}
-	_, err = io.CopyN(writer, download.Reader, rangeSpec.Length)
+	written, err := io.CopyN(writer, download.Reader, rangeSpec.Length)
+	logStreamFinished(ctx, fileID, rangeSpec, download, writer, written, err)
 	if err != nil && !isExpectedStreamEnd(ctx, err) {
 		// Headers are already committed, so a JSON error response cannot replace
 		// this stream. The Content-Length mismatch tells the client it was truncated.
 		slog.ErrorContext(ctx, "api.stream_failed", "file_id", fileID, "offset", rangeSpec.Offset, "length", rangeSpec.Length, "error", err)
 	}
 	return nil
+}
+
+// accountSpeed is the log shape for one Telegram account's contribution.
+type accountSpeed struct {
+	AccountID int64   `json:"account_id"`
+	MBps      float64 `json:"mbps"`
+	Chunks    int     `json:"chunks"`
+	Bytes     int64   `json:"bytes"`
+}
+
+// logStreamFinished writes one line per HTTP stream with the numbers needed to
+// tell a slow bot from a slow client: bytes, wall-clock throughput, time to
+// first byte, and per-account throughput.
+func logStreamFinished(ctx context.Context, fileID uuid.UUID, spec byteRange, download *transfer.Download, writer *firstByteWriter, written int64, copyErr error) {
+	elapsed := time.Since(writer.started)
+	if elapsed <= 0 {
+		return
+	}
+	attrs := []any{
+		"file_id", fileID,
+		"offset", spec.Offset,
+		"requested", spec.Length,
+		"bytes", written,
+		"duration_ms", elapsed.Milliseconds(),
+		"mbps", float64(written) / elapsed.Seconds() / (1 << 20),
+	}
+	if writer.wrote {
+		attrs = append(attrs, "ttfb_ms", writer.firstByte.Sub(writer.started).Milliseconds())
+	}
+	if copyErr != nil && !isExpectedStreamEnd(ctx, copyErr) {
+		attrs = append(attrs, "error", copyErr)
+	}
+	if provider, ok := download.Reader.(interface {
+		StreamStats() []telegramstore.AccountStreamStats
+	}); ok {
+		if stats := provider.StreamStats(); len(stats) > 0 {
+			speeds := make([]accountSpeed, 0, len(stats))
+			for _, entry := range stats {
+				speeds = append(speeds, accountSpeed{
+					AccountID: entry.AccountID,
+					MBps:      entry.MBps(),
+					Chunks:    entry.Chunks,
+					Bytes:     entry.Bytes,
+				})
+			}
+			attrs = append(attrs, "accounts", speeds)
+		}
+	}
+	slog.InfoContext(ctx, "api.stream_finished", attrs...)
 }
 
 func isExpectedStreamEnd(ctx context.Context, err error) bool {
@@ -194,15 +245,23 @@ func ifNoneMatch(value gen.OptETag) string {
 // which is the number that matters for VLC-style startup delay.
 type firstByteWriter struct {
 	http.ResponseWriter
-	started time.Time
-	fileID  uuid.UUID
-	wrote   bool
+	started   time.Time
+	firstByte time.Time
+	fileID    uuid.UUID
+	wrote     bool
 }
 
 func (w *firstByteWriter) Write(p []byte) (int, error) {
 	if !w.wrote && len(p) > 0 {
 		w.wrote = true
-		slog.Info("api.stream_first_byte", "file_id", w.fileID, "ttfb_ms", time.Since(w.started).Milliseconds())
+		w.firstByte = time.Now()
+		ttfb := time.Since(w.started)
+		slog.Info("api.stream_first_byte", "file_id", w.fileID, "ttfb_ms", ttfb.Milliseconds())
+		if ttfb > 3*time.Second {
+			// The player has been waiting on Telegram. Logged separately so it is
+			// obvious next to the request line instead of buried in a summary.
+			slog.Warn("api.stream_slow_start", "file_id", w.fileID, "ttfb_ms", ttfb.Milliseconds())
+		}
 	}
 	return w.ResponseWriter.Write(p)
 }
