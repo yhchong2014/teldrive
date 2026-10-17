@@ -54,6 +54,7 @@ type Runtime struct {
 	orphanCleanupEnabled bool
 	botProvisionEnabled  bool
 	uploadEnabled        bool
+	importEnabled        bool
 	mu                   sync.Mutex
 	started              bool
 	cancel               context.CancelFunc
@@ -127,6 +128,13 @@ func newRuntimeWithSchema(pool *pgxpool.Pool, storage telegramstore.Storage, sch
 			return nil, fmt.Errorf("register bot provisioning worker: %w", err)
 		}
 	}
+	importReader, importEnabled := storage.(telegramstore.DocumentMessageReader)
+	importEnabled = importEnabled && uploader != nil && uploader.Catalog != nil
+	if importEnabled {
+		if err := river.AddWorkerSafely(workers, NewChannelImportWorker(pool, uploader.Catalog, importReader)); err != nil {
+			return nil, fmt.Errorf("register channel import worker: %w", err)
+		}
+	}
 	uploadEnabled := uploader != nil && uploader.Catalog != nil && uploader.Uploads != nil && uploader.Pipeline != nil
 	if uploadEnabled {
 		if uploader.HTTPClient == nil {
@@ -166,7 +174,7 @@ func newRuntimeWithSchema(pool *pgxpool.Pool, storage telegramstore.Storage, sch
 	}
 	return &Runtime{
 		client: client, pool: pool, schema: schema,
-		purgeEnabled: purgeService != nil, orphanCleanupEnabled: orphanCleanupEnabled, botProvisionEnabled: botProvisionEnabled, uploadEnabled: uploadEnabled,
+		purgeEnabled: purgeService != nil, orphanCleanupEnabled: orphanCleanupEnabled, botProvisionEnabled: botProvisionEnabled, uploadEnabled: uploadEnabled, importEnabled: importEnabled,
 	}, nil
 }
 
@@ -398,6 +406,19 @@ func (r *Runtime) insertBotProvision(ctx context.Context, userID int64, botIDs [
 		ids = append(ids, fmt.Sprintf("%d", result.Job.ID))
 	}
 	return ids, nil
+}
+
+// InsertChannelImport queues a worker that indexes forwarded Telegram documents
+// without uploading their bytes again.
+func (r *Runtime) InsertChannelImport(ctx context.Context, args ChannelImportArgs) (Job, error) {
+	if r == nil || r.client == nil || !r.importEnabled || args.UserID <= 0 || args.JobID == "" {
+		return Job{}, ErrRuntimeNotConfigured
+	}
+	result, err := r.client.Insert(ctx, args, nil)
+	if err != nil {
+		return Job{}, fmt.Errorf("insert channel import: %w", err)
+	}
+	return jobFromRiver(result.Job), nil
 }
 
 func (r *Runtime) InsertUploadBatch(ctx context.Context, args UploadBatchArgs) (Job, error) {

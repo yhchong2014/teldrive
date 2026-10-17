@@ -31,13 +31,16 @@ import (
 	userevents "github.com/tgdrive/teldrive/v2/internal/events"
 	"github.com/tgdrive/teldrive/v2/internal/fileops"
 	"github.com/tgdrive/teldrive/v2/internal/health"
+	"github.com/tgdrive/teldrive/v2/internal/importer"
 	"github.com/tgdrive/teldrive/v2/internal/jobs"
 	"github.com/tgdrive/teldrive/v2/internal/legacymigrate"
 	"github.com/tgdrive/teldrive/v2/internal/secureblob"
 	"github.com/tgdrive/teldrive/v2/internal/shares"
+	"github.com/tgdrive/teldrive/v2/internal/streamtoken"
 	"github.com/tgdrive/teldrive/v2/internal/telegramstore"
 	"github.com/tgdrive/teldrive/v2/internal/transfer"
 	"github.com/tgdrive/teldrive/v2/internal/uploads"
+	"github.com/tgdrive/teldrive/v2/internal/webdav"
 )
 
 var (
@@ -188,6 +191,7 @@ func New(ctx context.Context, cfg config.Config, dependencies Dependencies) (*Ap
 		DisableHashing: !cfg.Uploads.HashingEnabled,
 	})
 	downloader := transfer.NewDownloader(catalogService, storage, keys)
+	downloader.ConfigureStreaming(cfg.Telegram.DownloadBotsPerStream, cfg.Telegram.DownloadWarmup)
 	fileService, err := fileops.NewService(pool, catalogService, channelService, storage)
 	if err != nil {
 		return nil, fmt.Errorf("create file operations service: %w", err)
@@ -205,14 +209,45 @@ func New(ctx context.Context, cfg config.Config, dependencies Dependencies) (*Ap
 	if err != nil {
 		return nil, fmt.Errorf("create job runtime: %w", err)
 	}
+	streamTokens, err := streamtoken.NewSigner(cfg.Security.SigningKey, cfg.Security.StreamTokenTTL)
+	if err != nil {
+		return nil, fmt.Errorf("create stream token signer: %w", err)
+	}
 	handler := api.NewHandler(
 		catalogService, uploadService, uploadPipeline, downloader, healthService,
 		cfg.Encryption.ActiveKeyVersion, eventService,
 	).ConfigureDomains(authService, botService, channelService, fileService, shareService, telegramAccount).
 		ConfigureJobs(jobRuntime)
-	httpServer, err := api.NewServer(handler, api.NewSecurity(authenticator, eventService))
+	handler.StreamTokens = streamTokens
+	if telegram.downloadAccounts != nil {
+		handler.DownloadAccounts = telegram.downloadAccounts
+	}
+	security := api.NewSecurity(authenticator, eventService).SetStreamTokenSigner(streamTokens)
+	httpServer, err := api.NewServer(handler, security)
 	if err != nil {
 		return nil, fmt.Errorf("create generated HTTP server: %w", err)
+	}
+	davCredentials, err := webdav.NewCredentials(sqlcgen.New(pool), cfg.WebDAV.SessionTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("create WebDAV credentials: %w", err)
+	}
+	handler.WebDAVCredentials = davCredentials
+	handler.WebDAVEnabled = cfg.WebDAV.Enabled
+	handler.WebDAVPrefix = cfg.WebDAV.Prefix
+	var davHandler http.Handler
+	if cfg.WebDAV.Enabled {
+		davHandler, err = webdav.New(catalogService, fileService, uploadService, uploadPipeline, downloader,
+			davCredentials, cfg.WebDAV.Realm, cfg.WebDAV.Prefix)
+		if err != nil {
+			return nil, fmt.Errorf("create WebDAV handler: %w", err)
+		}
+	}
+	if reader, ok := storage.(telegramstore.DocumentMessageReader); ok {
+		importService, err := importer.NewServiceWithQueries(sqlcgen.New(pool), reader, catalogService)
+		if err != nil {
+			return nil, fmt.Errorf("create channel importer: %w", err)
+		}
+		handler.Importer = importService
 	}
 	webUI, err := newWebUIHandler()
 	if err != nil {
@@ -225,6 +260,9 @@ func New(ctx context.Context, cfg config.Config, dependencies Dependencies) (*Ap
 		return nil, fmt.Errorf("configure trusted proxies: %w", err)
 	}
 	mux.Use(httpRequestLogger(dependencies.Logger, requestSecurity))
+	if davHandler != nil {
+		mux.Mount(strings.TrimSuffix(cfg.WebDAV.Prefix, "/"), davHandler)
+	}
 	routeApplication(mux, requestSecurity.middleware(browserCSRFMiddleware(sessionRenewalMiddleware(authService, httpServer))), webUI)
 
 	application := &App{

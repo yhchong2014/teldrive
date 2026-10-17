@@ -1,4 +1,32 @@
+import { apiFetch } from "@/api/client";
 import type { FileEntry } from "@/api/types";
+
+export type PlayerProvider = "vlc" | "potplayer";
+
+export type StreamToken = {
+  path: string;
+  token: string;
+  expiresAt: string;
+  sessionId: string;
+  accountId?: number;
+};
+
+/** Issue a short-lived signed URL that VLC/PotPlayer can open directly. */
+export async function createStreamToken(fileId: string): Promise<StreamToken> {
+  const response = await apiFetch(`/v1/files/${encodeURIComponent(fileId)}/stream-token`, {
+    method: "POST",
+  });
+  return (await response.json()) as StreamToken;
+}
+
+export function absoluteStreamUrl(path: string) {
+  return new URL(path, window.location.origin).toString();
+}
+
+/** VLC and PotPlayer accept a full HTTP URL after their custom scheme. */
+export function playerUrl(provider: PlayerProvider, url: string) {
+  return `${provider}://${url}`;
+}
 
 export function fileContentUrl(file: Pick<FileEntry, "id" | "name">, download = false) {
   const path = `/api/v1/files/${encodeURIComponent(file.id)}/content/${encodeURIComponent(file.name)}`;

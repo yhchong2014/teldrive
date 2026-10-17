@@ -13,6 +13,7 @@ import (
 	"github.com/tgdrive/teldrive/v2/internal/health"
 	"github.com/tgdrive/teldrive/v2/internal/jobs"
 	"github.com/tgdrive/teldrive/v2/internal/shares"
+	"github.com/tgdrive/teldrive/v2/internal/streamtoken"
 	"github.com/tgdrive/teldrive/v2/internal/telegramstore"
 	"github.com/tgdrive/teldrive/v2/internal/transfer"
 	"github.com/tgdrive/teldrive/v2/internal/uploads"
@@ -34,6 +35,12 @@ type Handler struct {
 	FileOps                    *fileops.Service
 	Shares                     *shares.Service
 	TelegramAccount            telegramstore.Account
+	StreamTokens               *streamtoken.Signer
+	DownloadAccounts           DownloadAccountSource
+	WebDAVCredentials          WebDAVCredentialStore
+	WebDAVEnabled              bool
+	WebDAVPrefix               string
+	Importer                   ChannelImporter
 	ActiveEncryptionKeyVersion int32
 }
 

@@ -116,10 +116,10 @@ func TestTelegramRangeReaderBoundsReadAheadBehindSlowChunk(t *testing.T) {
 		},
 	}
 	api := tg.NewClient(invoker)
-	reader := newTelegramRangeReader(ctx, cancel, 4, 2)
+	reader := newTelegramRangeReader(ctx, cancel, 4, 2, nil)
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- reader.fill(ctx, api, &tg.InputDocumentFileLocation{}, 0, 3*telegramReadChunk, nil)
+		errCh <- reader.fill(ctx, []rangeClient{{api: api}}, RangeRequest{Offset: 0, Length: 3 * telegramReadChunk}, &tg.InputDocumentFileLocation{}, 3*telegramReadChunk)
 	}()
 
 	started := map[int64]bool{}
@@ -165,11 +165,11 @@ func TestTelegramRangeReaderRetriesTimedOutChunk(t *testing.T) {
 
 	invoker := &timeoutThenSuccessDownloadInvoker{}
 	api := tg.NewClient(invoker)
-	reader := newTelegramRangeReader(ctx, cancel, 2, 1)
+	reader := newTelegramRangeReader(ctx, cancel, 2, 1, nil)
 	reader.timeout = 10 * time.Millisecond
 	reader.attempts = 2
 
-	if err := reader.fill(ctx, api, &tg.InputDocumentFileLocation{}, 0, telegramReadAlign, nil); err != nil {
+	if err := reader.fill(ctx, []rangeClient{{api: api}}, RangeRequest{Offset: 0, Length: telegramReadAlign}, &tg.InputDocumentFileLocation{}, telegramReadAlign); err != nil {
 		t.Fatalf("fill() error = %v", err)
 	}
 	if got := invoker.calls.Load(); got != 2 {
@@ -183,10 +183,10 @@ func TestTelegramRangeReaderRetriesRPCTimeout(t *testing.T) {
 
 	invoker := &rpcTimeoutThenSuccessDownloadInvoker{}
 	api := tg.NewClient(invoker)
-	reader := newTelegramRangeReader(ctx, cancel, 2, 1)
+	reader := newTelegramRangeReader(ctx, cancel, 2, 1, nil)
 	reader.attempts = 2
 
-	if err := reader.fill(ctx, api, &tg.InputDocumentFileLocation{}, 0, telegramReadAlign, nil); err != nil {
+	if err := reader.fill(ctx, []rangeClient{{api: api}}, RangeRequest{Offset: 0, Length: telegramReadAlign}, &tg.InputDocumentFileLocation{}, telegramReadAlign); err != nil {
 		t.Fatalf("fill() error = %v", err)
 	}
 	if got := invoker.calls.Load(); got != 2 {
@@ -200,29 +200,40 @@ func TestTelegramRangeReaderRefreshesExpiredFileReference(t *testing.T) {
 
 	invoker := &expiringDownloadInvoker{}
 	api := tg.NewClient(invoker)
-	reader := newTelegramRangeReader(ctx, cancel, 2, 1)
-	fresh := &tg.InputDocumentFileLocation{ID: 2}
-	var refreshes atomic.Int32
-	err := reader.fill(ctx, api, &tg.InputDocumentFileLocation{ID: 1}, 0, telegramReadAlign, func(context.Context) (*tg.InputDocumentFileLocation, error) {
-		refreshes.Add(1)
-		return fresh, nil
-	})
+	reader := newTelegramRangeReader(ctx, cancel, 2, 1, nil)
+	err := reader.fill(ctx, []rangeClient{{api: api}}, RangeRequest{ChannelID: 55, MessageID: 5, Offset: 0, Length: telegramReadAlign}, &tg.InputDocumentFileLocation{ID: 1}, telegramReadAlign)
 	if err != nil {
 		t.Fatalf("fill() error = %v", err)
 	}
 	if got := invoker.calls.Load(); got != 2 {
 		t.Fatalf("download calls = %d, want 2", got)
 	}
-	if got := refreshes.Load(); got != 1 {
+	if got := invoker.refreshes.Load(); got != 1 {
 		t.Fatalf("refresh calls = %d, want 1", got)
 	}
 }
 
 type expiringDownloadInvoker struct {
-	calls atomic.Int32
+	calls     atomic.Int32
+	refreshes atomic.Int32
 }
 
 func (i *expiringDownloadInvoker) Invoke(_ context.Context, input bin.Encoder, output bin.Decoder) error {
+	if request, ok := input.(*tg.ChannelsGetChannelsRequest); ok {
+		_ = request
+		box := output.(*tg.MessagesChatsBox)
+		box.Chats = &tg.MessagesChats{Chats: []tg.ChatClass{&tg.Channel{ID: 55, AccessHash: 9, Title: "media"}}}
+		return nil
+	}
+	if request, ok := input.(*tg.ChannelsGetMessagesRequest); ok {
+		_ = request
+		i.refreshes.Add(1)
+		box := output.(*tg.MessagesMessagesBox)
+		box.Messages = &tg.MessagesMessages{Messages: []tg.MessageClass{&tg.Message{ID: 5, Media: &tg.MessageMediaDocument{
+			Document: &tg.Document{ID: 2, Size: 4096, MimeType: "video/mp4"},
+		}}}}
+		return nil
+	}
 	request := input.(*tg.UploadGetFileRequest)
 	if i.calls.Add(1) == 1 {
 		return tgerr.New(400, "FILE_REFERENCE_EXPIRED")

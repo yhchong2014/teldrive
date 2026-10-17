@@ -115,6 +115,12 @@ type Invoker interface {
 	//
 	// POST /v1/channels
 	CreateChannel(ctx context.Context, request *ChannelCreateRequest, params CreateChannelParams) (CreateChannelRes, error)
+	// CreateChannelImport invokes createChannelImport operation.
+	//
+	// Index existing Telegram documents without uploading them again.
+	//
+	// POST /v1/files/import
+	CreateChannelImport(ctx context.Context, request *ImportRequest) (CreateChannelImportRes, error)
 	// CreateEventStreamTicket invokes createEventStreamTicket operation.
 	//
 	// Create a short-lived browser-compatible event stream credential.
@@ -149,6 +155,12 @@ type Invoker interface {
 	//
 	// POST /v1/files/{fileId}/shares
 	CreateShare(ctx context.Context, request *ShareCreateRequest, params CreateShareParams) (CreateShareRes, error)
+	// CreateStreamToken invokes createStreamToken operation.
+	//
+	// Issue a short-lived signed URL that media players such as VLC can open directly.
+	//
+	// POST /v1/files/{fileId}/stream-token
+	CreateStreamToken(ctx context.Context, params CreateStreamTokenParams) (CreateStreamTokenRes, error)
 	// CreateUpload invokes createUpload operation.
 	//
 	// Create a durable upload session.
@@ -183,6 +195,12 @@ type Invoker interface {
 	//
 	// DELETE /v1/periodic-jobs/{periodicJobId}
 	DeletePeriodicJob(ctx context.Context, params DeletePeriodicJobParams) (DeletePeriodicJobRes, error)
+	// DeleteWebDAVCredentials invokes deleteWebDAVCredentials operation.
+	//
+	// Remove the WebDAV login; clients can no longer authenticate.
+	//
+	// DELETE /v1/settings/webdav
+	DeleteWebDAVCredentials(ctx context.Context) (DeleteWebDAVCredentialsRes, error)
 	// DiscoverChannels invokes discoverChannels operation.
 	//
 	// List broadcast channels where the authenticated user can add administrators. Groups are excluded.
@@ -294,6 +312,12 @@ type Invoker interface {
 	//
 	// GET /v1/me/preferences
 	GetUserPreferences(ctx context.Context) (GetUserPreferencesRes, error)
+	// GetWebDAVCredentials invokes getWebDAVCredentials operation.
+	//
+	// Return the dedicated WebDAV login status for the authenticated user.
+	//
+	// GET /v1/settings/webdav
+	GetWebDAVCredentials(ctx context.Context) (GetWebDAVCredentialsRes, error)
 	// HeadFile invokes headFile operation.
 	//
 	// Return content metadata without streaming the file.
@@ -535,6 +559,12 @@ type Invoker interface {
 	//
 	// DELETE /v1/shares/{shareId}
 	RevokeShare(ctx context.Context, params RevokeShareParams) (RevokeShareRes, error)
+	// ScanChannelImport invokes scanChannelImport operation.
+	//
+	// List documents forwarded into a Teldrive channel that are not indexed yet.
+	//
+	// POST /v1/files/import/scan
+	ScanChannelImport(ctx context.Context, request *ImportScanRequest) (ScanChannelImportRes, error)
 	// SearchUsers invokes searchUsers operation.
 	//
 	// GET /v1/users/search
@@ -543,6 +573,12 @@ type Invoker interface {
 	//
 	// POST /v1/channels/{channelId}/select
 	SelectChannel(ctx context.Context, params SelectChannelParams) (SelectChannelRes, error)
+	// SetWebDAVCredentials invokes setWebDAVCredentials operation.
+	//
+	// Set the dedicated WebDAV username and password used by rclone/Cyberduck.
+	//
+	// PUT /v1/settings/webdav
+	SetWebDAVCredentials(ctx context.Context, request *WebDAVCredentialsUpdate) (SetWebDAVCredentialsRes, error)
 	// StreamEvents invokes streamEvents operation.
 	//
 	// Subscribe to ordered, replayable events for the authenticated user.
@@ -2955,6 +2991,146 @@ func (c *Client) sendCreateChannel(ctx context.Context, request *ChannelCreateRe
 	return result, nil
 }
 
+// CreateChannelImport invokes createChannelImport operation.
+//
+// Index existing Telegram documents without uploading them again.
+//
+// POST /v1/files/import
+func (c *Client) CreateChannelImport(ctx context.Context, request *ImportRequest) (CreateChannelImportRes, error) {
+	res, err := c.sendCreateChannelImport(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendCreateChannelImport(ctx context.Context, request *ImportRequest) (res CreateChannelImportRes, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("createChannelImport"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/v1/files/import"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, CreateChannelImportOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/v1/files/import"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeCreateChannelImportRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:BearerAuth"
+			switch err := c.securityBearerAuth(ctx, CreateChannelImportOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"BearerAuth\"")
+			}
+		}
+		{
+			stage = "Security:CookieAuth"
+			switch err := c.securityCookieAuth(ctx, CreateChannelImportOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"CookieAuth\"")
+			}
+		}
+		{
+			stage = "Security:ExternalApiKeyAuth"
+			switch err := c.securityExternalApiKeyAuth(ctx, CreateChannelImportOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 2
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ExternalApiKeyAuth\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+				{0b00000100},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeCreateChannelImportResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // CreateEventStreamTicket invokes createEventStreamTicket operation.
 //
 // Create a short-lived browser-compatible event stream credential.
@@ -4108,6 +4284,165 @@ func (c *Client) sendCreateShare(ctx context.Context, request *ShareCreateReques
 	return result, nil
 }
 
+// CreateStreamToken invokes createStreamToken operation.
+//
+// Issue a short-lived signed URL that media players such as VLC can open directly.
+//
+// POST /v1/files/{fileId}/stream-token
+func (c *Client) CreateStreamToken(ctx context.Context, params CreateStreamTokenParams) (CreateStreamTokenRes, error) {
+	res, err := c.sendCreateStreamToken(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendCreateStreamToken(ctx context.Context, params CreateStreamTokenParams) (res CreateStreamTokenRes, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("createStreamToken"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/v1/files/{fileId}/stream-token"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, CreateStreamTokenOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/v1/files/"
+	{
+		// Encode "fileId" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "fileId",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			if unwrapped := uuid.UUID(params.FileId); true {
+				return e.EncodeValue(conv.UUIDToString(unwrapped))
+			}
+			return nil
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/stream-token"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:BearerAuth"
+			switch err := c.securityBearerAuth(ctx, CreateStreamTokenOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"BearerAuth\"")
+			}
+		}
+		{
+			stage = "Security:CookieAuth"
+			switch err := c.securityCookieAuth(ctx, CreateStreamTokenOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"CookieAuth\"")
+			}
+		}
+		{
+			stage = "Security:ExternalApiKeyAuth"
+			switch err := c.securityExternalApiKeyAuth(ctx, CreateStreamTokenOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 2
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ExternalApiKeyAuth\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+				{0b00000100},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeCreateStreamTokenResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // CreateUpload invokes createUpload operation.
 //
 // Create a durable upload session.
@@ -5164,6 +5499,143 @@ func (c *Client) sendDeletePeriodicJob(ctx context.Context, params DeletePeriodi
 	return result, nil
 }
 
+// DeleteWebDAVCredentials invokes deleteWebDAVCredentials operation.
+//
+// Remove the WebDAV login; clients can no longer authenticate.
+//
+// DELETE /v1/settings/webdav
+func (c *Client) DeleteWebDAVCredentials(ctx context.Context) (DeleteWebDAVCredentialsRes, error) {
+	res, err := c.sendDeleteWebDAVCredentials(ctx)
+	return res, err
+}
+
+func (c *Client) sendDeleteWebDAVCredentials(ctx context.Context) (res DeleteWebDAVCredentialsRes, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("deleteWebDAVCredentials"),
+		semconv.HTTPRequestMethodKey.String("DELETE"),
+		semconv.URLTemplateKey.String("/v1/settings/webdav"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, DeleteWebDAVCredentialsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/v1/settings/webdav"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "DELETE", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:BearerAuth"
+			switch err := c.securityBearerAuth(ctx, DeleteWebDAVCredentialsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"BearerAuth\"")
+			}
+		}
+		{
+			stage = "Security:CookieAuth"
+			switch err := c.securityCookieAuth(ctx, DeleteWebDAVCredentialsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"CookieAuth\"")
+			}
+		}
+		{
+			stage = "Security:ExternalApiKeyAuth"
+			switch err := c.securityExternalApiKeyAuth(ctx, DeleteWebDAVCredentialsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 2
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ExternalApiKeyAuth\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+				{0b00000100},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeDeleteWebDAVCredentialsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // DiscoverChannels invokes discoverChannels operation.
 //
 // List broadcast channels where the authenticated user can add administrators. Groups are excluded.
@@ -5412,6 +5884,23 @@ func (c *Client) sendDownloadFile(ctx context.Context, params DownloadFileParams
 			return res, errors.Wrap(err, "encode query")
 		}
 	}
+	{
+		// Encode "stream_token" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "stream_token",
+			Style:   uri.QueryStyleForm,
+			Explode: false,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.StreamToken.Get(); ok {
+				return e.EncodeValue(conv.StringToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
 	u.RawQuery = q.Values().Encode()
 
 	stage = "EncodeRequest"
@@ -5490,6 +5979,17 @@ func (c *Client) sendDownloadFile(ctx context.Context, params DownloadFileParams
 				return res, errors.Wrap(err, "security \"ExternalApiKeyAuth\"")
 			}
 		}
+		{
+			stage = "Security:StreamTokenAuth"
+			switch err := c.securityStreamTokenAuth(ctx, DownloadFileOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 3
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"StreamTokenAuth\"")
+			}
+		}
 
 		if ok := func() bool {
 		nextRequirement:
@@ -5497,6 +5997,7 @@ func (c *Client) sendDownloadFile(ctx context.Context, params DownloadFileParams
 				{0b00000001},
 				{0b00000010},
 				{0b00000100},
+				{0b00001000},
 			} {
 				for i, mask := range requirement {
 					if satisfied[i]&mask != mask {
@@ -5618,6 +6119,23 @@ func (c *Client) sendDownloadFileLegacy(ctx context.Context, params DownloadFile
 			return res, errors.Wrap(err, "encode query")
 		}
 	}
+	{
+		// Encode "stream_token" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "stream_token",
+			Style:   uri.QueryStyleForm,
+			Explode: false,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.StreamToken.Get(); ok {
+				return e.EncodeValue(conv.StringToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
 	u.RawQuery = q.Values().Encode()
 
 	stage = "EncodeRequest"
@@ -5696,6 +6214,17 @@ func (c *Client) sendDownloadFileLegacy(ctx context.Context, params DownloadFile
 				return res, errors.Wrap(err, "security \"ExternalApiKeyAuth\"")
 			}
 		}
+		{
+			stage = "Security:StreamTokenAuth"
+			switch err := c.securityStreamTokenAuth(ctx, DownloadFileLegacyOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 3
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"StreamTokenAuth\"")
+			}
+		}
 
 		if ok := func() bool {
 		nextRequirement:
@@ -5703,6 +6232,7 @@ func (c *Client) sendDownloadFileLegacy(ctx context.Context, params DownloadFile
 				{0b00000001},
 				{0b00000010},
 				{0b00000100},
+				{0b00001000},
 			} {
 				for i, mask := range requirement {
 					if satisfied[i]&mask != mask {
@@ -5831,6 +6361,23 @@ func (c *Client) sendDownloadPublicShare(ctx context.Context, params DownloadPub
 		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
 			if val, ok := params.Download.Get(); ok {
 				return e.EncodeValue(conv.StringToString(string(val)))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "stream_token" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "stream_token",
+			Style:   uri.QueryStyleForm,
+			Explode: false,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.StreamToken.Get(); ok {
+				return e.EncodeValue(conv.StringToString(val))
 			}
 			return nil
 		}); err != nil {
@@ -6035,6 +6582,23 @@ func (c *Client) sendDownloadPublicShareFile(ctx context.Context, params Downloa
 			return res, errors.Wrap(err, "encode query")
 		}
 	}
+	{
+		// Encode "stream_token" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "stream_token",
+			Style:   uri.QueryStyleForm,
+			Explode: false,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.StreamToken.Get(); ok {
+				return e.EncodeValue(conv.StringToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
 	u.RawQuery = q.Values().Encode()
 
 	stage = "EncodeRequest"
@@ -6215,6 +6779,23 @@ func (c *Client) sendDownloadPublicShareFileLegacy(ctx context.Context, params D
 			return res, errors.Wrap(err, "encode query")
 		}
 	}
+	{
+		// Encode "stream_token" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "stream_token",
+			Style:   uri.QueryStyleForm,
+			Explode: false,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.StreamToken.Get(); ok {
+				return e.EncodeValue(conv.StringToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
 	u.RawQuery = q.Values().Encode()
 
 	stage = "EncodeRequest"
@@ -6367,6 +6948,23 @@ func (c *Client) sendDownloadPublicShareLegacy(ctx context.Context, params Downl
 		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
 			if val, ok := params.Download.Get(); ok {
 				return e.EncodeValue(conv.StringToString(string(val)))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "stream_token" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "stream_token",
+			Style:   uri.QueryStyleForm,
+			Explode: false,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.StreamToken.Get(); ok {
+				return e.EncodeValue(conv.StringToString(val))
 			}
 			return nil
 		}); err != nil {
@@ -8435,6 +9033,143 @@ func (c *Client) sendGetUserPreferences(ctx context.Context) (res GetUserPrefere
 	return result, nil
 }
 
+// GetWebDAVCredentials invokes getWebDAVCredentials operation.
+//
+// Return the dedicated WebDAV login status for the authenticated user.
+//
+// GET /v1/settings/webdav
+func (c *Client) GetWebDAVCredentials(ctx context.Context) (GetWebDAVCredentialsRes, error) {
+	res, err := c.sendGetWebDAVCredentials(ctx)
+	return res, err
+}
+
+func (c *Client) sendGetWebDAVCredentials(ctx context.Context) (res GetWebDAVCredentialsRes, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("getWebDAVCredentials"),
+		semconv.HTTPRequestMethodKey.String("GET"),
+		semconv.URLTemplateKey.String("/v1/settings/webdav"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, GetWebDAVCredentialsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/v1/settings/webdav"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:BearerAuth"
+			switch err := c.securityBearerAuth(ctx, GetWebDAVCredentialsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"BearerAuth\"")
+			}
+		}
+		{
+			stage = "Security:CookieAuth"
+			switch err := c.securityCookieAuth(ctx, GetWebDAVCredentialsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"CookieAuth\"")
+			}
+		}
+		{
+			stage = "Security:ExternalApiKeyAuth"
+			switch err := c.securityExternalApiKeyAuth(ctx, GetWebDAVCredentialsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 2
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ExternalApiKeyAuth\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+				{0b00000100},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeGetWebDAVCredentialsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // HeadFile invokes headFile operation.
 //
 // Return content metadata without streaming the file.
@@ -8526,6 +9261,27 @@ func (c *Client) sendHeadFile(ctx context.Context, params HeadFileParams) (res H
 	}
 	uri.AddPathParts(u, pathParts[:]...)
 
+	stage = "EncodeQueryParams"
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "stream_token" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "stream_token",
+			Style:   uri.QueryStyleForm,
+			Explode: false,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.StreamToken.Get(); ok {
+				return e.EncodeValue(conv.StringToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
+
 	stage = "EncodeRequest"
 	r, err := ht.NewRequest(ctx, "HEAD", u)
 	if err != nil {
@@ -8568,6 +9324,17 @@ func (c *Client) sendHeadFile(ctx context.Context, params HeadFileParams) (res H
 				return res, errors.Wrap(err, "security \"ExternalApiKeyAuth\"")
 			}
 		}
+		{
+			stage = "Security:StreamTokenAuth"
+			switch err := c.securityStreamTokenAuth(ctx, HeadFileOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 3
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"StreamTokenAuth\"")
+			}
+		}
 
 		if ok := func() bool {
 		nextRequirement:
@@ -8575,6 +9342,7 @@ func (c *Client) sendHeadFile(ctx context.Context, params HeadFileParams) (res H
 				{0b00000001},
 				{0b00000010},
 				{0b00000100},
+				{0b00001000},
 			} {
 				for i, mask := range requirement {
 					if satisfied[i]&mask != mask {
@@ -8685,6 +9453,27 @@ func (c *Client) sendHeadFileLegacy(ctx context.Context, params HeadFileLegacyPa
 	pathParts[2] = "/content"
 	uri.AddPathParts(u, pathParts[:]...)
 
+	stage = "EncodeQueryParams"
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "stream_token" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "stream_token",
+			Style:   uri.QueryStyleForm,
+			Explode: false,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.StreamToken.Get(); ok {
+				return e.EncodeValue(conv.StringToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
+
 	stage = "EncodeRequest"
 	r, err := ht.NewRequest(ctx, "HEAD", u)
 	if err != nil {
@@ -8727,6 +9516,17 @@ func (c *Client) sendHeadFileLegacy(ctx context.Context, params HeadFileLegacyPa
 				return res, errors.Wrap(err, "security \"ExternalApiKeyAuth\"")
 			}
 		}
+		{
+			stage = "Security:StreamTokenAuth"
+			switch err := c.securityStreamTokenAuth(ctx, HeadFileLegacyOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 3
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"StreamTokenAuth\"")
+			}
+		}
 
 		if ok := func() bool {
 		nextRequirement:
@@ -8734,6 +9534,7 @@ func (c *Client) sendHeadFileLegacy(ctx context.Context, params HeadFileLegacyPa
 				{0b00000001},
 				{0b00000010},
 				{0b00000100},
+				{0b00001000},
 			} {
 				for i, mask := range requirement {
 					if satisfied[i]&mask != mask {
@@ -16209,6 +17010,146 @@ func (c *Client) sendRevokeShare(ctx context.Context, params RevokeShareParams) 
 	return result, nil
 }
 
+// ScanChannelImport invokes scanChannelImport operation.
+//
+// List documents forwarded into a Teldrive channel that are not indexed yet.
+//
+// POST /v1/files/import/scan
+func (c *Client) ScanChannelImport(ctx context.Context, request *ImportScanRequest) (ScanChannelImportRes, error) {
+	res, err := c.sendScanChannelImport(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendScanChannelImport(ctx context.Context, request *ImportScanRequest) (res ScanChannelImportRes, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("scanChannelImport"),
+		semconv.HTTPRequestMethodKey.String("POST"),
+		semconv.URLTemplateKey.String("/v1/files/import/scan"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, ScanChannelImportOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/v1/files/import/scan"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeScanChannelImportRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:BearerAuth"
+			switch err := c.securityBearerAuth(ctx, ScanChannelImportOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"BearerAuth\"")
+			}
+		}
+		{
+			stage = "Security:CookieAuth"
+			switch err := c.securityCookieAuth(ctx, ScanChannelImportOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"CookieAuth\"")
+			}
+		}
+		{
+			stage = "Security:ExternalApiKeyAuth"
+			switch err := c.securityExternalApiKeyAuth(ctx, ScanChannelImportOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 2
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ExternalApiKeyAuth\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+				{0b00000100},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeScanChannelImportResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // SearchUsers invokes searchUsers operation.
 //
 // GET /v1/users/search
@@ -16509,6 +17450,146 @@ func (c *Client) sendSelectChannel(ctx context.Context, params SelectChannelPara
 
 	stage = "DecodeResponse"
 	result, err := decodeSelectChannelResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// SetWebDAVCredentials invokes setWebDAVCredentials operation.
+//
+// Set the dedicated WebDAV username and password used by rclone/Cyberduck.
+//
+// PUT /v1/settings/webdav
+func (c *Client) SetWebDAVCredentials(ctx context.Context, request *WebDAVCredentialsUpdate) (SetWebDAVCredentialsRes, error) {
+	res, err := c.sendSetWebDAVCredentials(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendSetWebDAVCredentials(ctx context.Context, request *WebDAVCredentialsUpdate) (res SetWebDAVCredentialsRes, err error) {
+	otelAttrs := []attribute.KeyValue{
+		otelogen.OperationID("setWebDAVCredentials"),
+		semconv.HTTPRequestMethodKey.String("PUT"),
+		semconv.URLTemplateKey.String("/v1/settings/webdav"),
+	}
+	otelAttrs = append(otelAttrs, c.cfg.Attributes...)
+
+	// Run stopwatch.
+	startTime := time.Now()
+	defer func() {
+		// Use floating point division here for higher precision (instead of Millisecond method).
+		elapsedDuration := time.Since(startTime)
+		c.duration.Record(ctx, float64(elapsedDuration)/float64(time.Millisecond), metric.WithAttributes(otelAttrs...))
+	}()
+
+	// Increment request counter.
+	c.requests.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+
+	// Start a span for this request.
+	ctx, span := c.cfg.Tracer.Start(ctx, SetWebDAVCredentialsOperation,
+		trace.WithAttributes(otelAttrs...),
+		clientSpanKind,
+	)
+	// Track stage for error reporting.
+	var stage string
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, stage)
+			c.errors.Add(ctx, 1, metric.WithAttributes(otelAttrs...))
+		}
+		span.End()
+	}()
+
+	stage = "BuildURL"
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/v1/settings/webdav"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	stage = "EncodeRequest"
+	r, err := ht.NewRequest(ctx, "PUT", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeSetWebDAVCredentialsRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+			stage = "Security:BearerAuth"
+			switch err := c.securityBearerAuth(ctx, SetWebDAVCredentialsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"BearerAuth\"")
+			}
+		}
+		{
+			stage = "Security:CookieAuth"
+			switch err := c.securityCookieAuth(ctx, SetWebDAVCredentialsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 1
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"CookieAuth\"")
+			}
+		}
+		{
+			stage = "Security:ExternalApiKeyAuth"
+			switch err := c.securityExternalApiKeyAuth(ctx, SetWebDAVCredentialsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 2
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"ExternalApiKeyAuth\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+				{0b00000010},
+				{0b00000100},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	stage = "SendRequest"
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	stage = "DecodeResponse"
+	result, err := decodeSetWebDAVCredentialsResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

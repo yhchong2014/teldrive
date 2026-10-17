@@ -12,6 +12,7 @@ import StorageIcon from "~icons/gravity-ui/database";
 import UploadIcon from "~icons/gravity-ui/arrow-up-from-line";
 import CloseIcon from "~icons/gravity-ui/xmark";
 import ClockIcon from "~icons/gravity-ui/clock";
+import CloudIcon from "~icons/gravity-ui/cloud";
 import { currentUserQueryOptions } from "@/auth/queries";
 import { useAppLocale } from "@/lib/locale";
 
@@ -40,6 +41,7 @@ const SETTINGS_GROUPS = [
     items: [
       { key: "sessions", path: "/settings/sessions", icon: SessionsIcon },
       { key: "apiKeys", path: "/settings/api-keys", icon: KeyIcon },
+      { key: "webdav", path: "/settings/webdav", icon: CloudIcon },
     ],
   },
   {

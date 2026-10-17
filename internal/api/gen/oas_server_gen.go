@@ -94,6 +94,12 @@ type Handler interface {
 	//
 	// POST /v1/channels
 	CreateChannel(ctx context.Context, req *ChannelCreateRequest, params CreateChannelParams) (CreateChannelRes, error)
+	// CreateChannelImport implements createChannelImport operation.
+	//
+	// Index existing Telegram documents without uploading them again.
+	//
+	// POST /v1/files/import
+	CreateChannelImport(ctx context.Context, req *ImportRequest) (CreateChannelImportRes, error)
 	// CreateEventStreamTicket implements createEventStreamTicket operation.
 	//
 	// Create a short-lived browser-compatible event stream credential.
@@ -128,6 +134,12 @@ type Handler interface {
 	//
 	// POST /v1/files/{fileId}/shares
 	CreateShare(ctx context.Context, req *ShareCreateRequest, params CreateShareParams) (CreateShareRes, error)
+	// CreateStreamToken implements createStreamToken operation.
+	//
+	// Issue a short-lived signed URL that media players such as VLC can open directly.
+	//
+	// POST /v1/files/{fileId}/stream-token
+	CreateStreamToken(ctx context.Context, params CreateStreamTokenParams) (CreateStreamTokenRes, error)
 	// CreateUpload implements createUpload operation.
 	//
 	// Create a durable upload session.
@@ -162,6 +174,12 @@ type Handler interface {
 	//
 	// DELETE /v1/periodic-jobs/{periodicJobId}
 	DeletePeriodicJob(ctx context.Context, params DeletePeriodicJobParams) (DeletePeriodicJobRes, error)
+	// DeleteWebDAVCredentials implements deleteWebDAVCredentials operation.
+	//
+	// Remove the WebDAV login; clients can no longer authenticate.
+	//
+	// DELETE /v1/settings/webdav
+	DeleteWebDAVCredentials(ctx context.Context) (DeleteWebDAVCredentialsRes, error)
 	// DiscoverChannels implements discoverChannels operation.
 	//
 	// List broadcast channels where the authenticated user can add administrators. Groups are excluded.
@@ -244,6 +262,12 @@ type Handler interface {
 	//
 	// GET /v1/me/preferences
 	GetUserPreferences(ctx context.Context) (GetUserPreferencesRes, error)
+	// GetWebDAVCredentials implements getWebDAVCredentials operation.
+	//
+	// Return the dedicated WebDAV login status for the authenticated user.
+	//
+	// GET /v1/settings/webdav
+	GetWebDAVCredentials(ctx context.Context) (GetWebDAVCredentialsRes, error)
 	// HeadFile implements headFile operation.
 	//
 	// Return content metadata without streaming the file.
@@ -485,6 +509,12 @@ type Handler interface {
 	//
 	// DELETE /v1/shares/{shareId}
 	RevokeShare(ctx context.Context, params RevokeShareParams) (RevokeShareRes, error)
+	// ScanChannelImport implements scanChannelImport operation.
+	//
+	// List documents forwarded into a Teldrive channel that are not indexed yet.
+	//
+	// POST /v1/files/import/scan
+	ScanChannelImport(ctx context.Context, req *ImportScanRequest) (ScanChannelImportRes, error)
 	// SearchUsers implements searchUsers operation.
 	//
 	// GET /v1/users/search
@@ -493,6 +523,12 @@ type Handler interface {
 	//
 	// POST /v1/channels/{channelId}/select
 	SelectChannel(ctx context.Context, params SelectChannelParams) (SelectChannelRes, error)
+	// SetWebDAVCredentials implements setWebDAVCredentials operation.
+	//
+	// Set the dedicated WebDAV username and password used by rclone/Cyberduck.
+	//
+	// PUT /v1/settings/webdav
+	SetWebDAVCredentials(ctx context.Context, req *WebDAVCredentialsUpdate) (SetWebDAVCredentialsRes, error)
 	// SyncChannels implements syncChannels operation.
 	//
 	// Register only chosen manageable broadcast channels, without deleting existing channels.

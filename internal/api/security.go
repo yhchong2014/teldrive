@@ -8,6 +8,7 @@ import (
 
 	"github.com/tgdrive/teldrive/v2/internal/api/gen"
 	"github.com/tgdrive/teldrive/v2/internal/principal"
+	"github.com/tgdrive/teldrive/v2/internal/streamtoken"
 )
 
 var (
@@ -29,6 +30,17 @@ type EventTicketAuthenticator interface {
 type Security struct {
 	authenticator Authenticator
 	eventTickets  EventTicketAuthenticator
+	streamTokens  *streamtoken.Signer
+}
+
+// SetStreamTokenSigner enables signed media player URLs for file content
+// operations. The generated security handler only offers this scheme on those
+// operations.
+func (s *Security) SetStreamTokenSigner(signer *streamtoken.Signer) *Security {
+	if s != nil {
+		s.streamTokens = signer
+	}
+	return s
 }
 
 func NewSecurity(authenticator Authenticator, eventTickets ...EventTicketAuthenticator) *Security {
@@ -120,6 +132,19 @@ func (s *Security) HandleEventTicketAuth(ctx context.Context, _ gen.OperationNam
 		return ctx, ErrInvalidIdentity
 	}
 	return principal.WithIdentity(ctx, principal.Identity{UserID: userID, Source: "event_ticket"}), nil
+}
+
+func (s *Security) HandleStreamTokenAuth(ctx context.Context, _ gen.OperationName, auth gen.StreamTokenAuth) (context.Context, error) {
+	if s == nil || s.streamTokens == nil || strings.TrimSpace(auth.APIKey) == "" {
+		return ctx, ErrUnauthenticated
+	}
+	claims, err := s.streamTokens.Verify(auth.APIKey)
+	if err != nil {
+		return ctx, errors.Join(ErrUnauthenticated, err)
+	}
+	auth.Roles = append([]string(nil), auth.Roles...)
+	ctx = principal.WithIdentity(ctx, principal.Identity{UserID: claims.UserID, Source: "stream_token"})
+	return streamtoken.WithClaims(ctx, claims), nil
 }
 
 var _ gen.SecurityHandler = (*Security)(nil)

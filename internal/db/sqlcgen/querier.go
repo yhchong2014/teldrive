@@ -33,6 +33,8 @@ type Querier interface {
 	CreateFileAccessGrant(ctx context.Context, arg CreateFileAccessGrantParams) (*FileAccessGrant, error)
 	CreateFileShare(ctx context.Context, arg CreateFileShareParams) (*FileShare, error)
 	CreateFolder(ctx context.Context, arg CreateFolderParams) (*File, error)
+	CreateImportItem(ctx context.Context, arg CreateImportItemParams) error
+	CreateImportJob(ctx context.Context, arg CreateImportJobParams) (*ImportJob, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (*Session, error)
 	CreateTelegramLoginFlow(ctx context.Context, arg CreateTelegramLoginFlowParams) (*TelegramLoginFlow, error)
 	CreateUploadSession(ctx context.Context, arg CreateUploadSessionParams) (*UploadSession, error)
@@ -46,6 +48,7 @@ type Querier interface {
 	DeleteFileViewState(ctx context.Context, arg DeleteFileViewStateParams) (int64, error)
 	DeleteUploadPartsForCleanup(ctx context.Context, parts []byte) (int64, error)
 	DeleteUserEventsBefore(ctx context.Context, cutoff pgtype.Timestamptz) (int64, error)
+	DeleteWebDAVCredential(ctx context.Context, userID int64) error
 	EnsureUserPreferences(ctx context.Context, userID int64) error
 	ExpireUploadSessions(ctx context.Context) ([]*UploadSession, error)
 	FinalizeUploadExpectedSize(ctx context.Context, arg FinalizeUploadExpectedSizeParams) (*UploadSession, error)
@@ -65,6 +68,7 @@ type Querier interface {
 	GetFileShareForOwner(ctx context.Context, arg GetFileShareForOwnerParams) (*FileShare, error)
 	GetFileViewState(ctx context.Context, arg GetFileViewStateParams) (*FileViewState, error)
 	GetIdempotencyKey(ctx context.Context, arg GetIdempotencyKeyParams) (*IdempotencyKey, error)
+	GetImportJob(ctx context.Context, arg GetImportJobParams) (*ImportJob, error)
 	GetLatestActiveSessionForUser(ctx context.Context, userID int64) (*Session, error)
 	GetSelectedChannel(ctx context.Context, userID int64) (*Channel, error)
 	GetSessionByRefreshTokenHash(ctx context.Context, refreshTokenHash []byte) (*Session, error)
@@ -79,12 +83,17 @@ type Querier interface {
 	GetUser(ctx context.Context, userID int64) (*User, error)
 	GetUserEventCursorState(ctx context.Context, arg GetUserEventCursorStateParams) (*GetUserEventCursorStateRow, error)
 	GetUserPreferences(ctx context.Context, userID int64) (*UserPreference, error)
+	GetWebDAVCredentialByUser(ctx context.Context, userID int64) (*WebdavCredential, error)
+	GetWebDAVCredentialByUsername(ctx context.Context, username string) (*WebdavCredential, error)
+	IncrementImportJobProgress(ctx context.Context, arg IncrementImportJobProgressParams) (*ImportJob, error)
 	IncrementShareDownloadCount(ctx context.Context, id pgtype.UUID) (*FileShare, error)
 	InsertAuditEvent(ctx context.Context, arg InsertAuditEventParams) (*AuditEvent, error)
 	InsertCopiedFileParts(ctx context.Context, parts []byte) (int64, error)
 	InsertCopiedFiles(ctx context.Context, files []byte) ([]*File, error)
 	InsertFileFromUpload(ctx context.Context, arg InsertFileFromUploadParams) (*File, error)
 	InsertFilePartsFromUpload(ctx context.Context, arg InsertFilePartsFromUploadParams) (int64, error)
+	InsertImportedFile(ctx context.Context, arg InsertImportedFileParams) (*File, error)
+	InsertImportedFilePart(ctx context.Context, arg InsertImportedFilePartParams) error
 	InsertPendingBots(ctx context.Context, arg InsertPendingBotsParams) ([]*Bot, error)
 	InsertUserEvent(ctx context.Context, arg InsertUserEventParams) (*UserEvent, error)
 	ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]*ApiKey, error)
@@ -113,6 +122,9 @@ type Querier interface {
 	ListFileSubtreeIDs(ctx context.Context, arg ListFileSubtreeIDsParams) ([]pgtype.UUID, error)
 	ListFiles(ctx context.Context, arg ListFilesParams) ([]*File, error)
 	ListFilesAdvanced(ctx context.Context, arg ListFilesAdvancedParams) ([]*File, error)
+	ListImportJobs(ctx context.Context, arg ListImportJobsParams) ([]*ImportJob, error)
+	ListIndexedMessageIDs(ctx context.Context, arg ListIndexedMessageIDsParams) ([]int64, error)
+	ListPendingImportItems(ctx context.Context, jobID pgtype.UUID) ([]*ImportItem, error)
 	ListRecentStorageActivity(ctx context.Context, arg ListRecentStorageActivityParams) ([]*ListRecentStorageActivityRow, error)
 	ListReferencedMessageIDs(ctx context.Context, arg ListReferencedMessageIDsParams) ([]int64, error)
 	ListSessions(ctx context.Context, arg ListSessionsParams) ([]*Session, error)
@@ -148,6 +160,8 @@ type Querier interface {
 	MarkFileIDsDeletionPending(ctx context.Context, arg MarkFileIDsDeletionPendingParams) error
 	MarkFileSubtreeDeletionPending(ctx context.Context, arg MarkFileSubtreeDeletionPendingParams) error
 	MarkFileSubtreesDeletionPending(ctx context.Context, arg MarkFileSubtreesDeletionPendingParams) error
+	MarkImportItemFailed(ctx context.Context, arg MarkImportItemFailedParams) error
+	MarkImportItemImported(ctx context.Context, arg MarkImportItemImportedParams) error
 	MarkUploadCompleting(ctx context.Context, arg MarkUploadCompletingParams) (*UploadSession, error)
 	MarkUploadPartFailed(ctx context.Context, arg MarkUploadPartFailedParams) (*UploadPart, error)
 	MarkUploadPartStored(ctx context.Context, arg MarkUploadPartStoredParams) (*UploadPart, error)
@@ -193,6 +207,7 @@ type Querier interface {
 	UpdateFilePartSizes(ctx context.Context, arg UpdateFilePartSizesParams) (int64, error)
 	UpdateFilePartSizesMany(ctx context.Context, arg UpdateFilePartSizesManyParams) (int64, error)
 	UpdateFileShare(ctx context.Context, arg UpdateFileShareParams) (*FileShare, error)
+	UpdateImportJobStatus(ctx context.Context, arg UpdateImportJobStatusParams) (*ImportJob, error)
 	UpdateSessionTelegramSession(ctx context.Context, arg UpdateSessionTelegramSessionParams) (int64, error)
 	UpdateTelegramLoginFlowState(ctx context.Context, arg UpdateTelegramLoginFlowStateParams) (*TelegramLoginFlow, error)
 	UpdateUserPreferences(ctx context.Context, arg UpdateUserPreferencesParams) (*UserPreference, error)
@@ -200,6 +215,7 @@ type Querier interface {
 	UpsertDiscoveredChannels(ctx context.Context, arg UpsertDiscoveredChannelsParams) ([]*Channel, error)
 	UpsertFileViewState(ctx context.Context, arg UpsertFileViewStateParams) (*FileViewState, error)
 	UpsertUser(ctx context.Context, arg UpsertUserParams) (*User, error)
+	UpsertWebDAVCredential(ctx context.Context, arg UpsertWebDAVCredentialParams) (*WebdavCredential, error)
 }
 
 var _ Querier = (*Queries)(nil)

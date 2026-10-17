@@ -15,9 +15,14 @@ scalar Checksum extends string;
 model CookieAuth is ApiKeyAuth<ApiKeyLocation.cookie, "teldrive_access">;
 model ExternalApiKeyAuth is ApiKeyAuth<ApiKeyLocation.header, "X-Api-Key">;
 
+/** Short-lived signed URL credential used by media players that cannot send headers. */
+model StreamTokenAuth is ApiKeyAuth<ApiKeyLocation.query, "stream_token">;
+
 alias BearerOrCookieAuth = BearerAuth | CookieAuth;
 
 alias TelDriveAuth = BearerAuth | CookieAuth | ExternalApiKeyAuth;
+
+alias FileContentAuth = TelDriveAuth | StreamTokenAuth;
 
 model ErrorDetail {
   /** Stable machine-readable error code. */

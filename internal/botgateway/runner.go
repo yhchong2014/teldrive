@@ -168,6 +168,82 @@ func (r *UploadAwareRunner) LeaseAccount(ctx context.Context, userID int64, oper
 
 // acquireBot reserves connections on the least-loaded eligible bot. It returns
 // nil when the operation must use the fallback runner.
+// LeasePreferredAccount leases a specific account when it is still eligible,
+// which keeps every request of one media stream on the warm client that served
+// the first one. A preferred account that is no longer eligible falls back to
+// normal least-loaded selection.
+// DownloadAccounts lists the Telegram accounts eligible to serve a download for
+// this user, including the user account when no bot is configured.
+func (r *UploadAwareRunner) DownloadAccounts(ctx context.Context, userID int64) ([]int64, error) {
+	if r == nil || r.queries == nil || userID <= 0 {
+		return nil, ErrUploadRunnerConfiguration
+	}
+	if r.downloadBots == 0 {
+		return []int64{userID}, nil
+	}
+	bots, err := r.queries.ListDownloadEligibleBots(ctx, sqlcgen.ListDownloadEligibleBotsParams{
+		UserID: userID, DownloadBots: int32(r.downloadBots),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list download bots: %w", err)
+	}
+	accounts := make([]int64, 0, len(bots))
+	for _, bot := range bots {
+		accounts = append(accounts, bot.BotID)
+	}
+	if len(accounts) == 0 {
+		accounts = append(accounts, userID)
+	}
+	return accounts, nil
+}
+
+func (r *UploadAwareRunner) LeasePreferredAccount(ctx context.Context, userID int64, operation telegramstore.Operation, connections int, preferred int64) (telegramstore.AccountLease, error) {
+	if preferred <= 0 {
+		return r.LeaseAccount(ctx, userID, operation, connections)
+	}
+	bot, err := r.preferredBot(ctx, userID, operation, connections, preferred)
+	if err != nil {
+		return nil, err
+	}
+	if bot != nil {
+		return &botLease{runner: r, userID: userID, operation: operation, bot: bot, connections: connections}, nil
+	}
+	if preferred == userID && operation != telegramstore.OperationUpload {
+		return &fallbackLease{runner: r, userID: userID, operation: operation}, nil
+	}
+	return r.LeaseAccount(ctx, userID, operation, connections)
+}
+
+func (r *UploadAwareRunner) preferredBot(ctx context.Context, userID int64, operation telegramstore.Operation, connections int, preferred int64) (*sqlcgen.Bot, error) {
+	if r == nil || r.queries == nil || r.cipher == nil || r.factory == nil || r.fallback == nil || userID <= 0 || connections < 1 {
+		return nil, ErrUploadRunnerConfiguration
+	}
+	var bots []*sqlcgen.Bot
+	var err error
+	switch operation {
+	case telegramstore.OperationUpload:
+		bots, err = r.queries.ListUploadEligibleBots(ctx, userID)
+	case telegramstore.OperationDownload:
+		if r.downloadBots == 0 {
+			return nil, nil
+		}
+		bots, err = r.queries.ListDownloadEligibleBots(ctx, sqlcgen.ListDownloadEligibleBotsParams{
+			UserID: userID, DownloadBots: int32(r.downloadBots),
+		})
+	default:
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list %s bots: %w", operation, err)
+	}
+	for _, bot := range bots {
+		if bot.BotID == preferred {
+			return r.load.acquireID(bot, connections), nil
+		}
+	}
+	return nil, nil
+}
+
 func (r *UploadAwareRunner) acquireBot(ctx context.Context, userID int64, operation telegramstore.Operation, connections int) (*sqlcgen.Bot, error) {
 	if r == nil || r.queries == nil || r.selector == nil || r.cipher == nil || r.factory == nil || r.fallback == nil || userID <= 0 || connections < 1 {
 		return nil, ErrUploadRunnerConfiguration
@@ -300,6 +376,17 @@ func (l *botLoad) acquire(bots []*sqlcgen.Bot, rotation uint64, connections int)
 	return best
 }
 
+// acquireID reserves connections on one specific bot.
+func (l *botLoad) acquireID(bot *sqlcgen.Bot, connections int) *sqlcgen.Bot {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.connections == nil {
+		l.connections = make(map[int64]int)
+	}
+	l.connections[bot.BotID] += connections
+	return bot
+}
+
 func (l *botLoad) release(botID int64, connections int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -347,3 +434,4 @@ func (l *fallbackLease) Release() {}
 var _ telegramstore.Runner = (*UploadAwareRunner)(nil)
 var _ telegramstore.PooledRunner = (*UploadAwareRunner)(nil)
 var _ telegramstore.AccountLeaser = (*UploadAwareRunner)(nil)
+var _ telegramstore.PreferredAccountLeaser = (*UploadAwareRunner)(nil)

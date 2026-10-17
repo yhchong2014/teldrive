@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -21,11 +22,14 @@ import (
 )
 
 type telegramComponents struct {
-	login           authn.TelegramLogin
-	verifier        bots.Verifier
-	account         telegramstore.Account
-	storage         telegramstore.Storage
-	downloadClients *telegramstore.DownloadClientPool
+	login            authn.TelegramLogin
+	verifier         bots.Verifier
+	account          telegramstore.Account
+	storage          telegramstore.Storage
+	downloadClients  *telegramstore.DownloadClientPool
+	downloadAccounts interface {
+		DownloadAccounts(context.Context, int64) ([]int64, error)
+	}
 }
 
 func buildLegacyBotVerifier(cfg config.Config, logger *slog.Logger) (bots.Verifier, error) {
@@ -123,6 +127,9 @@ func buildTelegramComponents(cfg config.Config, pool *pgxpool.Pool, cipher *secu
 		}
 		storage := injected
 		var downloadClients *telegramstore.DownloadClientPool
+		var downloadAccounts interface {
+			DownloadAccounts(context.Context, int64) ([]int64, error)
+		}
 		if storage == nil {
 			channelBotProvider, err := botgateway.NewChannelBotProvider(pool)
 			if err != nil {
@@ -132,6 +139,7 @@ func buildTelegramComponents(cfg config.Config, pool *pgxpool.Pool, cipher *secu
 			if err != nil {
 				return telegramComponents{}, fmt.Errorf("create upload-aware Telegram runner: %w", err)
 			}
+			downloadAccounts = uploadRunner
 			options := []telegramstore.GotdStorageOption{
 				telegramstore.WithBotProvider(channelBotProvider),
 				telegramstore.WithDownloadReadBuffers(cfg.Telegram.DownloadReadBuffers),
@@ -141,6 +149,7 @@ func buildTelegramComponents(cfg config.Config, pool *pgxpool.Pool, cipher *secu
 				downloadClients, err = telegramstore.NewDownloadClientPool(uploadRunner, telegramstore.DownloadClientPoolConfig{
 					ReadBuffers:  cfg.Telegram.DownloadReadBuffers,
 					ReadParallel: cfg.Telegram.DownloadReadParallel,
+					IdleTimeout:  cfg.Telegram.DownloadClientIdleTimeout,
 				}, globalCache)
 				if err != nil {
 					return telegramComponents{}, fmt.Errorf("create Telegram download client pool: %w", err)
@@ -151,6 +160,7 @@ func buildTelegramComponents(cfg config.Config, pool *pgxpool.Pool, cipher *secu
 		}
 		return telegramComponents{
 			login: login, verifier: verifier, account: account, storage: storage, downloadClients: downloadClients,
+			downloadAccounts: downloadAccounts,
 		}, nil
 
 	default:

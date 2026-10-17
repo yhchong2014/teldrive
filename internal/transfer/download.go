@@ -40,10 +40,38 @@ type Downloader struct {
 	catalog FileCatalog
 	storage telegramstore.Storage
 	keys    KeyProvider
+
+	streamAccounts int
+	streamWarmup   bool
 }
 
 func NewDownloader(catalog FileCatalog, storage telegramstore.Storage, keys KeyProvider) *Downloader {
-	return &Downloader{catalog: catalog, storage: storage, keys: keys}
+	return &Downloader{catalog: catalog, storage: storage, keys: keys, streamAccounts: 1}
+}
+
+// ConfigureStreaming controls how many Telegram accounts may serve one stream
+// and whether the first account is connected when a stream token is issued.
+func (d *Downloader) ConfigureStreaming(accounts int, warmup bool) {
+	if d == nil {
+		return
+	}
+	d.streamAccounts = accounts
+	d.streamWarmup = warmup
+}
+
+// WarmStream connects a pooled download client ahead of playback so the media
+// player's first request does not pay the connect and authentication cost.
+func (d *Downloader) WarmStream(ctx context.Context, userID, accountID int64) error {
+	if d == nil || d.storage == nil || !d.streamWarmup || userID <= 0 {
+		return nil
+	}
+	warmer, ok := d.storage.(interface {
+		WarmDownload(context.Context, int64, int64) error
+	})
+	if !ok {
+		return nil
+	}
+	return warmer.WarmDownload(ctx, userID, accountID)
 }
 
 type DownloadRequest struct {
@@ -51,6 +79,10 @@ type DownloadRequest struct {
 	FileID uuid.UUID
 	Offset int64
 	Length int64 // -1 means through end of file.
+
+	// PreferredAccountID pins the stream to the Telegram account that served
+	// an earlier request for the same file. Zero leaves selection to the pool.
+	PreferredAccountID int64
 }
 
 type Download struct {
@@ -92,7 +124,7 @@ func (d *Downloader) openOrigin(ctx context.Context, request DownloadRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	session, err := d.openDownloadSession(ctx, request.UserID)
+	session, err := d.openDownloadSession(ctx, request.UserID, request.PreferredAccountID)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +218,14 @@ func (d *Downloader) resolveMissingPartSizes(ctx context.Context, session telegr
 	return nil
 }
 
-func (d *Downloader) openDownloadSession(ctx context.Context, userID int64) (telegramstore.DownloadSession, error) {
+func (d *Downloader) openDownloadSession(ctx context.Context, userID, preferredAccountID int64) (telegramstore.DownloadSession, error) {
+	if multi, ok := d.storage.(telegramstore.MultiAccountDownloadSession); ok {
+		accounts := d.streamAccounts
+		if accounts <= 0 {
+			accounts = 32
+		}
+		return multi.OpenDownloadSessionMulti(ctx, userID, accounts, preferredAccountID)
+	}
 	if opener, ok := d.storage.(telegramstore.DownloadSessionOpener); ok {
 		return opener.OpenDownloadSession(ctx, userID)
 	}

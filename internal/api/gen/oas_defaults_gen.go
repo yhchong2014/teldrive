@@ -59,6 +59,14 @@ func (s *FolderCreateRequest) setDefaults() {
 }
 
 // setDefaults set default value of fields.
+func (s *ImportScanRequest) setDefaults() {
+	{
+		val := int32(100)
+		s.Limit.SetTo(val)
+	}
+}
+
+// setDefaults set default value of fields.
 func (s *ShareCreateRequest) setDefaults() {
 	{
 		val := ShareCreateRequestPermission("read")

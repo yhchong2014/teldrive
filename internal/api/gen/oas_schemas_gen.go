@@ -1078,6 +1078,22 @@ type CreateChannelConflict ErrorEnvelope
 
 func (*CreateChannelConflict) createChannelRes() {}
 
+type CreateChannelImportConflict ErrorEnvelope
+
+func (*CreateChannelImportConflict) createChannelImportRes() {}
+
+type CreateChannelImportNotFound ErrorEnvelope
+
+func (*CreateChannelImportNotFound) createChannelImportRes() {}
+
+type CreateChannelImportUnauthorized ErrorEnvelope
+
+func (*CreateChannelImportUnauthorized) createChannelImportRes() {}
+
+type CreateChannelImportUnprocessableEntity ErrorEnvelope
+
+func (*CreateChannelImportUnprocessableEntity) createChannelImportRes() {}
+
 type CreateChannelTooManyRequests ErrorEnvelope
 
 func (*CreateChannelTooManyRequests) createChannelRes() {}
@@ -1214,6 +1230,14 @@ type CreateShareUnprocessableEntity ErrorEnvelope
 
 func (*CreateShareUnprocessableEntity) createShareRes() {}
 
+type CreateStreamTokenNotFound ErrorEnvelope
+
+func (*CreateStreamTokenNotFound) createStreamTokenRes() {}
+
+type CreateStreamTokenUnauthorized ErrorEnvelope
+
+func (*CreateStreamTokenUnauthorized) createStreamTokenRes() {}
+
 type CreateUploadConflict ErrorEnvelope
 
 func (*CreateUploadConflict) createUploadRes() {}
@@ -1324,6 +1348,11 @@ func (*DeletePeriodicJobNotFound) deletePeriodicJobRes() {}
 type DeletePeriodicJobUnauthorized ErrorEnvelope
 
 func (*DeletePeriodicJobUnauthorized) deletePeriodicJobRes() {}
+
+// DeleteWebDAVCredentialsNoContent is response for DeleteWebDAVCredentials operation.
+type DeleteWebDAVCredentialsNoContent struct{}
+
+func (*DeleteWebDAVCredentialsNoContent) deleteWebDAVCredentialsRes() {}
 
 type DiscoverChannelsOKApplicationJSON []DiscoveredChannel
 
@@ -3361,6 +3390,7 @@ func (s *ErrorEnvelope) SetError(val ErrorDetail) {
 
 func (*ErrorEnvelope) cleanTrashRes()                {}
 func (*ErrorEnvelope) deleteFileViewStateRes()       {}
+func (*ErrorEnvelope) deleteWebDAVCredentialsRes()   {}
 func (*ErrorEnvelope) getCurrentUserRes()            {}
 func (*ErrorEnvelope) getDriveStatisticsRes()        {}
 func (*ErrorEnvelope) getFileCategoryStatisticsRes() {}
@@ -3368,6 +3398,7 @@ func (*ErrorEnvelope) getJobStatisticsRes()          {}
 func (*ErrorEnvelope) getPeriodicJobCatalogRes()     {}
 func (*ErrorEnvelope) getStorageStatsRes()           {}
 func (*ErrorEnvelope) getUserPreferencesRes()        {}
+func (*ErrorEnvelope) getWebDAVCredentialsRes()      {}
 func (*ErrorEnvelope) healthReadyRes()               {}
 func (*ErrorEnvelope) listApiKeysRes()               {}
 func (*ErrorEnvelope) listBotsRes()                  {}
@@ -5994,6 +6025,388 @@ func (s *HealthStatusStatus) UnmarshalText(data []byte) error {
 		return errors.Errorf("invalid value: %q", data)
 	}
 }
+
+// Ref: #/components/schemas/ImportJob
+type ImportJob struct {
+	ID        UUID            `json:"id"`
+	ChannelId int64           `json:"channelId"`
+	ParentId  OptUUID         `json:"parentId"`
+	Status    ImportJobStatus `json:"status"`
+	Total     int32           `json:"total"`
+	Imported  int32           `json:"imported"`
+	Skipped   int32           `json:"skipped"`
+	Failed    int32           `json:"failed"`
+	Error     OptString       `json:"error"`
+	CreatedAt time.Time       `json:"createdAt"`
+	UpdatedAt time.Time       `json:"updatedAt"`
+}
+
+// GetID returns the value of ID.
+func (s *ImportJob) GetID() UUID {
+	return s.ID
+}
+
+// GetChannelId returns the value of ChannelId.
+func (s *ImportJob) GetChannelId() int64 {
+	return s.ChannelId
+}
+
+// GetParentId returns the value of ParentId.
+func (s *ImportJob) GetParentId() OptUUID {
+	return s.ParentId
+}
+
+// GetStatus returns the value of Status.
+func (s *ImportJob) GetStatus() ImportJobStatus {
+	return s.Status
+}
+
+// GetTotal returns the value of Total.
+func (s *ImportJob) GetTotal() int32 {
+	return s.Total
+}
+
+// GetImported returns the value of Imported.
+func (s *ImportJob) GetImported() int32 {
+	return s.Imported
+}
+
+// GetSkipped returns the value of Skipped.
+func (s *ImportJob) GetSkipped() int32 {
+	return s.Skipped
+}
+
+// GetFailed returns the value of Failed.
+func (s *ImportJob) GetFailed() int32 {
+	return s.Failed
+}
+
+// GetError returns the value of Error.
+func (s *ImportJob) GetError() OptString {
+	return s.Error
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *ImportJob) GetCreatedAt() time.Time {
+	return s.CreatedAt
+}
+
+// GetUpdatedAt returns the value of UpdatedAt.
+func (s *ImportJob) GetUpdatedAt() time.Time {
+	return s.UpdatedAt
+}
+
+// SetID sets the value of ID.
+func (s *ImportJob) SetID(val UUID) {
+	s.ID = val
+}
+
+// SetChannelId sets the value of ChannelId.
+func (s *ImportJob) SetChannelId(val int64) {
+	s.ChannelId = val
+}
+
+// SetParentId sets the value of ParentId.
+func (s *ImportJob) SetParentId(val OptUUID) {
+	s.ParentId = val
+}
+
+// SetStatus sets the value of Status.
+func (s *ImportJob) SetStatus(val ImportJobStatus) {
+	s.Status = val
+}
+
+// SetTotal sets the value of Total.
+func (s *ImportJob) SetTotal(val int32) {
+	s.Total = val
+}
+
+// SetImported sets the value of Imported.
+func (s *ImportJob) SetImported(val int32) {
+	s.Imported = val
+}
+
+// SetSkipped sets the value of Skipped.
+func (s *ImportJob) SetSkipped(val int32) {
+	s.Skipped = val
+}
+
+// SetFailed sets the value of Failed.
+func (s *ImportJob) SetFailed(val int32) {
+	s.Failed = val
+}
+
+// SetError sets the value of Error.
+func (s *ImportJob) SetError(val OptString) {
+	s.Error = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *ImportJob) SetCreatedAt(val time.Time) {
+	s.CreatedAt = val
+}
+
+// SetUpdatedAt sets the value of UpdatedAt.
+func (s *ImportJob) SetUpdatedAt(val time.Time) {
+	s.UpdatedAt = val
+}
+
+func (*ImportJob) createChannelImportRes() {}
+
+// Ref: #/components/schemas/ImportJobStatus
+type ImportJobStatus string
+
+const (
+	ImportJobStatusPending   ImportJobStatus = "pending"
+	ImportJobStatusRunning   ImportJobStatus = "running"
+	ImportJobStatusCompleted ImportJobStatus = "completed"
+	ImportJobStatusFailed    ImportJobStatus = "failed"
+)
+
+// AllValues returns all ImportJobStatus values.
+func (ImportJobStatus) AllValues() []ImportJobStatus {
+	return []ImportJobStatus{
+		ImportJobStatusPending,
+		ImportJobStatusRunning,
+		ImportJobStatusCompleted,
+		ImportJobStatusFailed,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ImportJobStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case ImportJobStatusPending:
+		return []byte(s), nil
+	case ImportJobStatusRunning:
+		return []byte(s), nil
+	case ImportJobStatusCompleted:
+		return []byte(s), nil
+	case ImportJobStatusFailed:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ImportJobStatus) UnmarshalText(data []byte) error {
+	switch ImportJobStatus(data) {
+	case ImportJobStatusPending:
+		*s = ImportJobStatusPending
+		return nil
+	case ImportJobStatusRunning:
+		*s = ImportJobStatusRunning
+		return nil
+	case ImportJobStatusCompleted:
+		*s = ImportJobStatusCompleted
+		return nil
+	case ImportJobStatusFailed:
+		*s = ImportJobStatusFailed
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Ref: #/components/schemas/ImportRequest
+type ImportRequest struct {
+	ChannelId int64 `json:"channelId"`
+	// Destination folder. Omit to import into the drive root.
+	ParentId   OptUUID `json:"parentId"`
+	MessageIds []int64 `json:"messageIds"`
+}
+
+// GetChannelId returns the value of ChannelId.
+func (s *ImportRequest) GetChannelId() int64 {
+	return s.ChannelId
+}
+
+// GetParentId returns the value of ParentId.
+func (s *ImportRequest) GetParentId() OptUUID {
+	return s.ParentId
+}
+
+// GetMessageIds returns the value of MessageIds.
+func (s *ImportRequest) GetMessageIds() []int64 {
+	return s.MessageIds
+}
+
+// SetChannelId sets the value of ChannelId.
+func (s *ImportRequest) SetChannelId(val int64) {
+	s.ChannelId = val
+}
+
+// SetParentId sets the value of ParentId.
+func (s *ImportRequest) SetParentId(val OptUUID) {
+	s.ParentId = val
+}
+
+// SetMessageIds sets the value of MessageIds.
+func (s *ImportRequest) SetMessageIds(val []int64) {
+	s.MessageIds = val
+}
+
+// Ref: #/components/schemas/ImportScanItem
+type ImportScanItem struct {
+	MessageId int64     `json:"messageId"`
+	Name      string    `json:"name"`
+	Size      int64     `json:"size"`
+	MimeType  OptString `json:"mimeType"`
+	ModTime   time.Time `json:"modTime"`
+	// True when this Telegram message is already part of the catalog.
+	Imported bool `json:"imported"`
+	// Copyable Telegram link pointing at the source message.
+	Link string `json:"link"`
+}
+
+// GetMessageId returns the value of MessageId.
+func (s *ImportScanItem) GetMessageId() int64 {
+	return s.MessageId
+}
+
+// GetName returns the value of Name.
+func (s *ImportScanItem) GetName() string {
+	return s.Name
+}
+
+// GetSize returns the value of Size.
+func (s *ImportScanItem) GetSize() int64 {
+	return s.Size
+}
+
+// GetMimeType returns the value of MimeType.
+func (s *ImportScanItem) GetMimeType() OptString {
+	return s.MimeType
+}
+
+// GetModTime returns the value of ModTime.
+func (s *ImportScanItem) GetModTime() time.Time {
+	return s.ModTime
+}
+
+// GetImported returns the value of Imported.
+func (s *ImportScanItem) GetImported() bool {
+	return s.Imported
+}
+
+// GetLink returns the value of Link.
+func (s *ImportScanItem) GetLink() string {
+	return s.Link
+}
+
+// SetMessageId sets the value of MessageId.
+func (s *ImportScanItem) SetMessageId(val int64) {
+	s.MessageId = val
+}
+
+// SetName sets the value of Name.
+func (s *ImportScanItem) SetName(val string) {
+	s.Name = val
+}
+
+// SetSize sets the value of Size.
+func (s *ImportScanItem) SetSize(val int64) {
+	s.Size = val
+}
+
+// SetMimeType sets the value of MimeType.
+func (s *ImportScanItem) SetMimeType(val OptString) {
+	s.MimeType = val
+}
+
+// SetModTime sets the value of ModTime.
+func (s *ImportScanItem) SetModTime(val time.Time) {
+	s.ModTime = val
+}
+
+// SetImported sets the value of Imported.
+func (s *ImportScanItem) SetImported(val bool) {
+	s.Imported = val
+}
+
+// SetLink sets the value of Link.
+func (s *ImportScanItem) SetLink(val string) {
+	s.Link = val
+}
+
+// Ref: #/components/schemas/ImportScanRequest
+type ImportScanRequest struct {
+	// Teldrive Telegram channel that contains the forwarded files.
+	ChannelId int64 `json:"channelId"`
+	// Pagination cursor: only messages with a smaller ID are returned.
+	BeforeId OptInt64 `json:"beforeId"`
+	Limit    OptInt32 `json:"limit"`
+}
+
+// GetChannelId returns the value of ChannelId.
+func (s *ImportScanRequest) GetChannelId() int64 {
+	return s.ChannelId
+}
+
+// GetBeforeId returns the value of BeforeId.
+func (s *ImportScanRequest) GetBeforeId() OptInt64 {
+	return s.BeforeId
+}
+
+// GetLimit returns the value of Limit.
+func (s *ImportScanRequest) GetLimit() OptInt32 {
+	return s.Limit
+}
+
+// SetChannelId sets the value of ChannelId.
+func (s *ImportScanRequest) SetChannelId(val int64) {
+	s.ChannelId = val
+}
+
+// SetBeforeId sets the value of BeforeId.
+func (s *ImportScanRequest) SetBeforeId(val OptInt64) {
+	s.BeforeId = val
+}
+
+// SetLimit sets the value of Limit.
+func (s *ImportScanRequest) SetLimit(val OptInt32) {
+	s.Limit = val
+}
+
+// Ref: #/components/schemas/ImportScanResponse
+type ImportScanResponse struct {
+	Items      []ImportScanItem `json:"items"`
+	NextCursor OptString        `json:"nextCursor"`
+	Exhausted  bool             `json:"exhausted"`
+}
+
+// GetItems returns the value of Items.
+func (s *ImportScanResponse) GetItems() []ImportScanItem {
+	return s.Items
+}
+
+// GetNextCursor returns the value of NextCursor.
+func (s *ImportScanResponse) GetNextCursor() OptString {
+	return s.NextCursor
+}
+
+// GetExhausted returns the value of Exhausted.
+func (s *ImportScanResponse) GetExhausted() bool {
+	return s.Exhausted
+}
+
+// SetItems sets the value of Items.
+func (s *ImportScanResponse) SetItems(val []ImportScanItem) {
+	s.Items = val
+}
+
+// SetNextCursor sets the value of NextCursor.
+func (s *ImportScanResponse) SetNextCursor(val OptString) {
+	s.NextCursor = val
+}
+
+// SetExhausted sets the value of Exhausted.
+func (s *ImportScanResponse) SetExhausted(val bool) {
+	s.Exhausted = val
+}
+
+func (*ImportScanResponse) scanChannelImportRes() {}
 
 // Ref: #/components/schemas/InterfaceLocale
 type InterfaceLocale string
@@ -10128,6 +10541,18 @@ type RevokeShareUnauthorized ErrorEnvelope
 
 func (*RevokeShareUnauthorized) revokeShareRes() {}
 
+type ScanChannelImportNotFound ErrorEnvelope
+
+func (*ScanChannelImportNotFound) scanChannelImportRes() {}
+
+type ScanChannelImportUnauthorized ErrorEnvelope
+
+func (*ScanChannelImportUnauthorized) scanChannelImportRes() {}
+
+type ScanChannelImportUnprocessableEntity ErrorEnvelope
+
+func (*ScanChannelImportUnprocessableEntity) scanChannelImportRes() {}
+
 type SearchUsersOKApplicationJSON []UserSearchResult
 
 func (*SearchUsersOKApplicationJSON) searchUsersRes() {}
@@ -10221,6 +10646,18 @@ func (s *SessionSummary) SetExpiresAt(val time.Time) {
 func (s *SessionSummary) SetRevokedAt(val OptDateTime) {
 	s.RevokedAt = val
 }
+
+type SetWebDAVCredentialsConflict ErrorEnvelope
+
+func (*SetWebDAVCredentialsConflict) setWebDAVCredentialsRes() {}
+
+type SetWebDAVCredentialsUnauthorized ErrorEnvelope
+
+func (*SetWebDAVCredentialsUnauthorized) setWebDAVCredentialsRes() {}
+
+type SetWebDAVCredentialsUnprocessableEntity ErrorEnvelope
+
+func (*SetWebDAVCredentialsUnprocessableEntity) setWebDAVCredentialsRes() {}
 
 // Ref: #/components/schemas/ShareCreateRequest
 type ShareCreateRequest struct {
@@ -11188,6 +11625,94 @@ func (*StreamEventsUnauthorized) streamEventsRes() {}
 type StreamEventsUnprocessableEntity ErrorEnvelope
 
 func (*StreamEventsUnprocessableEntity) streamEventsRes() {}
+
+// Ref: #/components/schemas/StreamToken
+type StreamToken struct {
+	// Absolute server path including the signed token query parameter.
+	Path      string    `json:"path"`
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	SessionId string    `json:"sessionId"`
+	// Telegram account that will serve the stream, when known.
+	AccountId OptInt64 `json:"accountId"`
+}
+
+// GetPath returns the value of Path.
+func (s *StreamToken) GetPath() string {
+	return s.Path
+}
+
+// GetToken returns the value of Token.
+func (s *StreamToken) GetToken() string {
+	return s.Token
+}
+
+// GetExpiresAt returns the value of ExpiresAt.
+func (s *StreamToken) GetExpiresAt() time.Time {
+	return s.ExpiresAt
+}
+
+// GetSessionId returns the value of SessionId.
+func (s *StreamToken) GetSessionId() string {
+	return s.SessionId
+}
+
+// GetAccountId returns the value of AccountId.
+func (s *StreamToken) GetAccountId() OptInt64 {
+	return s.AccountId
+}
+
+// SetPath sets the value of Path.
+func (s *StreamToken) SetPath(val string) {
+	s.Path = val
+}
+
+// SetToken sets the value of Token.
+func (s *StreamToken) SetToken(val string) {
+	s.Token = val
+}
+
+// SetExpiresAt sets the value of ExpiresAt.
+func (s *StreamToken) SetExpiresAt(val time.Time) {
+	s.ExpiresAt = val
+}
+
+// SetSessionId sets the value of SessionId.
+func (s *StreamToken) SetSessionId(val string) {
+	s.SessionId = val
+}
+
+// SetAccountId sets the value of AccountId.
+func (s *StreamToken) SetAccountId(val OptInt64) {
+	s.AccountId = val
+}
+
+func (*StreamToken) createStreamTokenRes() {}
+
+type StreamTokenAuth struct {
+	APIKey string
+	Roles  []string
+}
+
+// GetAPIKey returns the value of APIKey.
+func (s *StreamTokenAuth) GetAPIKey() string {
+	return s.APIKey
+}
+
+// GetRoles returns the value of Roles.
+func (s *StreamTokenAuth) GetRoles() []string {
+	return s.Roles
+}
+
+// SetAPIKey sets the value of APIKey.
+func (s *StreamTokenAuth) SetAPIKey(val string) {
+	s.APIKey = val
+}
+
+// SetRoles sets the value of Roles.
+func (s *StreamTokenAuth) SetRoles(val []string) {
+	s.Roles = val
+}
 
 type SyncChannelsNotFound ErrorEnvelope
 
@@ -13080,4 +13605,83 @@ func (s *ViewerKind) UnmarshalText(data []byte) error {
 	default:
 		return errors.Errorf("invalid value: %q", data)
 	}
+}
+
+// Ref: #/components/schemas/WebDAVCredentials
+type WebDAVCredentials struct {
+	// True when the server has WebDAV enabled in configuration.
+	Enabled    bool      `json:"enabled"`
+	Configured bool      `json:"configured"`
+	Username   OptString `json:"username"`
+	// URL clients should use, for example https://host/dav.
+	URL OptString `json:"url"`
+}
+
+// GetEnabled returns the value of Enabled.
+func (s *WebDAVCredentials) GetEnabled() bool {
+	return s.Enabled
+}
+
+// GetConfigured returns the value of Configured.
+func (s *WebDAVCredentials) GetConfigured() bool {
+	return s.Configured
+}
+
+// GetUsername returns the value of Username.
+func (s *WebDAVCredentials) GetUsername() OptString {
+	return s.Username
+}
+
+// GetURL returns the value of URL.
+func (s *WebDAVCredentials) GetURL() OptString {
+	return s.URL
+}
+
+// SetEnabled sets the value of Enabled.
+func (s *WebDAVCredentials) SetEnabled(val bool) {
+	s.Enabled = val
+}
+
+// SetConfigured sets the value of Configured.
+func (s *WebDAVCredentials) SetConfigured(val bool) {
+	s.Configured = val
+}
+
+// SetUsername sets the value of Username.
+func (s *WebDAVCredentials) SetUsername(val OptString) {
+	s.Username = val
+}
+
+// SetURL sets the value of URL.
+func (s *WebDAVCredentials) SetURL(val OptString) {
+	s.URL = val
+}
+
+func (*WebDAVCredentials) getWebDAVCredentialsRes() {}
+func (*WebDAVCredentials) setWebDAVCredentialsRes() {}
+
+// Ref: #/components/schemas/WebDAVCredentialsUpdate
+type WebDAVCredentialsUpdate struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// GetUsername returns the value of Username.
+func (s *WebDAVCredentialsUpdate) GetUsername() string {
+	return s.Username
+}
+
+// GetPassword returns the value of Password.
+func (s *WebDAVCredentialsUpdate) GetPassword() string {
+	return s.Password
+}
+
+// SetUsername sets the value of Username.
+func (s *WebDAVCredentialsUpdate) SetUsername(val string) {
+	s.Username = val
+}
+
+// SetPassword sets the value of Password.
+func (s *WebDAVCredentialsUpdate) SetPassword(val string) {
+	s.Password = val
 }

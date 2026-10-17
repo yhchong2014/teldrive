@@ -553,6 +553,35 @@ type IdempotencyKey struct {
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 }
 
+type ImportItem struct {
+	JobID     pgtype.UUID        `json:"job_id"`
+	MessageID int64              `json:"message_id"`
+	Name      string             `json:"name"`
+	Size      int64              `json:"size"`
+	MimeType  pgtype.Text        `json:"mime_type"`
+	ModTime   pgtype.Timestamptz `json:"mod_time"`
+	Status    string             `json:"status"`
+	FileID    pgtype.UUID        `json:"file_id"`
+	Error     pgtype.Text        `json:"error"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ImportJob struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserID    int64              `json:"user_id"`
+	ChannelID int64              `json:"channel_id"`
+	ParentID  pgtype.UUID        `json:"parent_id"`
+	Status    string             `json:"status"`
+	Total     int32              `json:"total"`
+	Imported  int32              `json:"imported"`
+	Skipped   int32              `json:"skipped"`
+	Failed    int32              `json:"failed"`
+	Error     pgtype.Text        `json:"error"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Session struct {
 	ID               pgtype.UUID        `json:"id"`
 	UserID           int64              `json:"user_id"`
@@ -656,4 +685,12 @@ type UserPreference struct {
 	Locale               pgtype.Text        `json:"locale"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WebdavCredential struct {
+	UserID       int64              `json:"user_id"`
+	Username     string             `json:"username"`
+	PasswordHash string             `json:"password_hash"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
