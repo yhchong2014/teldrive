@@ -113,6 +113,7 @@ type Querier interface {
 	ListFileSubtreeIDs(ctx context.Context, arg ListFileSubtreeIDsParams) ([]pgtype.UUID, error)
 	ListFiles(ctx context.Context, arg ListFilesParams) ([]*File, error)
 	ListFilesAdvanced(ctx context.Context, arg ListFilesAdvancedParams) ([]*File, error)
+	ListImportedTelegramMessages(ctx context.Context, arg ListImportedTelegramMessagesParams) ([]int64, error)
 	ListRecentStorageActivity(ctx context.Context, arg ListRecentStorageActivityParams) ([]*ListRecentStorageActivityRow, error)
 	ListReferencedMessageIDs(ctx context.Context, arg ListReferencedMessageIDsParams) ([]int64, error)
 	ListSessions(ctx context.Context, arg ListSessionsParams) ([]*Session, error)
@@ -155,6 +156,7 @@ type Querier interface {
 	MoveFilesWithNames(ctx context.Context, arg MoveFilesWithNamesParams) ([]*File, error)
 	NextBotSelectionValue(ctx context.Context, arg NextBotSelectionValueParams) (int64, error)
 	QueueFileSubtreePurge(ctx context.Context, arg QueueFileSubtreePurgeParams) ([]*File, error)
+	RecordTelegramImport(ctx context.Context, arg RecordTelegramImportParams) error
 	ReleaseAdvisoryLock(ctx context.Context, lockID int64) (bool, error)
 	RemoveFileBookmarks(ctx context.Context, arg RemoveFileBookmarksParams) error
 	RenameUploadSession(ctx context.Context, arg RenameUploadSessionParams) (int64, error)

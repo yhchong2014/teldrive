@@ -41,8 +41,9 @@ rate-burst = 10
 proxy = ""
 upload-threads = 8
 download-bots = 0
-# Keep this disabled to preserve request-scoped Telegram clients.
-download-client-pool = false
+# Keeps download clients warm for 5 idle minutes so that video seeks skip the
+# Telegram connection setup. Set to false for request-scoped clients.
+download-client-pool = true
 download-read-buffers = 32
 download-read-parallel = 4
 randomize-part-names = true
@@ -75,6 +76,14 @@ session-ttl = "168h"
 # Disable to skip automatic BLAKE3 hashing during uploads. Client-supplied checksums still require verification.
 hashing-enabled = true
 local-import-roots = []
+
+[webdav]
+# WebDAV clients sign in with any user name and an API key as the password.
+enabled = true
+prefix = "/webdav"
+read-only = false
+upload-part-size = "512MB"
+encrypt-uploads = false
 
 [cache.memory]
 size = "5MB"

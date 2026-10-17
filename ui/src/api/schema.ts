@@ -936,6 +936,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/uploads/telegram-imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description Queue an import of documents that already exist in Telegram channels,
+         *     without downloading or uploading them again. Progress and results are
+         *     reported as the job output.
+         */
+        post: operations["createTelegramImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/uploads/{uploadId}": {
         parameters: {
             query?: never;
@@ -2081,6 +2102,33 @@ export interface components {
             chunkSize: number;
             /** @default false */
             encryption: boolean;
+        };
+        /** @enum {string} */
+        TelegramImportMode: "auto" | "reference" | "copy";
+        TelegramImportRequest: {
+            /** @description Destination folder UUID or absolute drive path from root. Missing folders of a path are created. */
+            destination: string;
+            /**
+             * @description Source channel for `scan` and `messageIds`: a channel ID (with or without
+             *     the Bot API -100 prefix), a public username, or a t.me link to the channel.
+             */
+            channel?: string;
+            /**
+             * @description Import every document in `channel` that is not in TelDrive yet.
+             * @default false
+             */
+            scan: boolean;
+            /** @description Message IDs and inclusive ranges in `channel`, for example `12`, `15-20` or `12, 15-20`. */
+            messageIds?: string[];
+            /**
+             * @description Message links such as `https://t.me/c/1234567890/45`, `https://t.me/name/45`,
+             *     or ranges such as `https://t.me/c/1234567890/45-60`.
+             */
+            links?: string[];
+            /** @default auto */
+            mode: components["schemas"]["TelegramImportMode"];
+            /** @default rename */
+            conflictPolicy: components["schemas"]["NameConflictPolicy"];
         };
         UploadCreateRequest: {
             parentId?: components["schemas"]["Uuid"];
@@ -5870,6 +5918,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Access is unauthorized. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Client error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createTelegramImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TelegramImportRequest"];
+            };
+        };
+        responses: {
+            /** @description The request has been accepted for processing, but processing has not yet completed. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Job"];
                 };
             };
             /** @description Access is unauthorized. */

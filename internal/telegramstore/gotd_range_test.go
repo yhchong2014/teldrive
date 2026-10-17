@@ -104,6 +104,46 @@ func TestPlanTelegramReadsStaysWithinTelegramBoundaries(t *testing.T) {
 		}
 	}
 }
+func TestPlanTelegramReadRampsUpThenRealignsToFullChunks(t *testing.T) {
+	var offset int64
+	remaining := int64(3 * telegramReadChunk)
+	var plans []telegramReadPlan
+	for seq := int64(0); remaining > 0; seq++ {
+		plan := planTelegramRead(offset, remaining, telegramReadLimit(seq))
+		plans = append(plans, plan)
+		offset += int64(plan.length)
+		remaining -= int64(plan.length)
+	}
+	want := []telegramReadPlan{
+		{offset: 0, limit: 128 * 1024, length: 128 * 1024},
+		{offset: 128 * 1024, limit: 256 * 1024, length: 256 * 1024},
+		{offset: 384 * 1024, limit: 512 * 1024, length: 512 * 1024},
+		// The rest of the first MiB, cut by the 1 MiB request boundary.
+		{offset: 896 * 1024, limit: 128 * 1024, length: 128 * 1024},
+		{offset: telegramReadChunk, limit: telegramReadChunk, length: telegramReadChunk},
+		{offset: 2 * telegramReadChunk, limit: telegramReadChunk, length: telegramReadChunk},
+	}
+	if len(plans) != len(want) {
+		t.Fatalf("plans = %+v, want %+v", plans, want)
+	}
+	for i := range want {
+		if plans[i] != want[i] {
+			t.Fatalf("plan %d = %+v, want %+v", i, plans[i], want[i])
+		}
+	}
+}
+
+func TestPlanTelegramReadRampKeepsUnalignedStartWithinLimits(t *testing.T) {
+	// A seek into the middle of a 4 KiB block still gets a small first request.
+	plan := planTelegramRead(5*telegramReadChunk+4095, 10*telegramReadChunk, telegramReadLimit(0))
+	if plan.offset != 5*telegramReadChunk || plan.skip != 4095 || plan.limit != 128*1024 || plan.length != 128*1024-4095 {
+		t.Fatalf("plan = %+v", plan)
+	}
+	if telegramReadLimit(int64(len(telegramReadRamp))) != telegramReadChunk || telegramReadLimit(-1) != telegramReadChunk {
+		t.Fatal("chunks after the ramp must use the full Telegram chunk size")
+	}
+}
+
 func TestTelegramRangeReaderBoundsReadAheadBehindSlowChunk(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -117,9 +157,15 @@ func TestTelegramRangeReaderBoundsReadAheadBehindSlowChunk(t *testing.T) {
 	}
 	api := tg.NewClient(invoker)
 	reader := newTelegramRangeReader(ctx, cancel, 4, 2)
+	// Exactly three ramped chunks, so that one read is left after the head.
+	// The first requests are capped by the read ramp, so the second chunk
+	// starts right after the first ramped chunk.
+	second := int64(telegramReadRamp[0])
+	third := second + int64(telegramReadRamp[1])
+	total := third + int64(telegramReadRamp[2])
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- reader.fill(ctx, api, &tg.InputDocumentFileLocation{}, 0, 3*telegramReadChunk, nil)
+		errCh <- reader.fill(ctx, api, &tg.InputDocumentFileLocation{}, 0, total, nil)
 	}()
 
 	started := map[int64]bool{}
@@ -131,7 +177,7 @@ func TestTelegramRangeReaderBoundsReadAheadBehindSlowChunk(t *testing.T) {
 			t.Fatal("initial Telegram reads did not start")
 		}
 	}
-	if !started[0] || !started[telegramReadChunk] {
+	if !started[0] || !started[second] {
 		t.Fatalf("initial offsets = %#v", started)
 	}
 	select {
@@ -143,8 +189,8 @@ func TestTelegramRangeReaderBoundsReadAheadBehindSlowChunk(t *testing.T) {
 	close(releaseFirst)
 	select {
 	case offset := <-invoker.started:
-		if offset != 2*telegramReadChunk {
-			t.Fatalf("next offset = %d, want %d", offset, 2*telegramReadChunk)
+		if offset != third {
+			t.Fatalf("next offset = %d, want %d", offset, third)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("next Telegram read did not start after stalled head completed")

@@ -30,7 +30,7 @@ func TestDefaultIncludesLegacyPublicTelegramClientIdentity(t *testing.T) {
 	if cfg.Telegram.DownloadBots != 0 {
 		t.Fatalf("Telegram DownloadBots = %d, want authenticated-user fallback", cfg.Telegram.DownloadBots)
 	}
-	if cfg.Telegram.DownloadClientPool || cfg.Telegram.DownloadReadBuffers != 32 || cfg.Telegram.DownloadReadParallel != 4 {
+	if !cfg.Telegram.DownloadClientPool || cfg.Telegram.DownloadReadBuffers != 32 || cfg.Telegram.DownloadReadParallel != 4 {
 		t.Fatalf("Telegram download defaults = %#v", cfg.Telegram)
 	}
 	if cfg.Telegram.ClientLogging {

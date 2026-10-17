@@ -1,0 +1,67 @@
+---
+title: Import from Telegram
+description: Add documents that already exist in Telegram channels without uploading them again.
+---
+
+Files you already have in Telegram channels can be added to Teldrive directly. Teldrive does not download or upload them again: it either points at the original messages or makes a server-side copy on Telegram, which takes about a second per file whatever its size.
+
+## Start an import
+
+Choose **Upload → Import from Telegram** and fill in:
+
+- **Destination**: an absolute drive path such as `/Telegram/Movies` or a folder UUID. Missing folders of a path are created.
+- **Channel**: the source channel for a scan or for message IDs. Accepted forms are the channel ID (`1234567890`), the Bot API ID (`-1001234567890`), a public `@username`, or a link such as `https://t.me/c/1234567890` or `https://t.me/name`.
+  - **Import every document of the channel** scans the whole channel history and imports every document that is not in Teldrive yet.
+  - **Message IDs** imports single messages and ranges such as `12, 15-20`.
+- **Message links**: one link per line, from any channels. Ranges are allowed:
+
+  ```text
+  https://t.me/c/1234567890/45
+  https://t.me/c/1234567890/50-60
+  https://t.me/somechannel/88
+  tg://privatepost?channel=1234567890&post=45
+  ```
+
+  To copy a link in Telegram, right-click a message and choose **Copy Message Link**.
+
+The import runs as a background job. Its progress and result (imported, skipped and failed documents, with the first error messages) are shown in **Tasks**, and imported files appear in the destination folder as they are added.
+
+Your Telegram account must be able to read the source channel: join private channels before importing from them. Bots are not used for imports because they cannot read channel history.
+
+## Import modes
+
+| Mode | What happens | Source message |
+| --- | --- | --- |
+| **Automatic** (default) | References documents of your Teldrive channels and copies documents of other channels. | See the two rows below. |
+| **Copy** | Sends each document to your selected storage channel as a new message, on Telegram's servers. | Untouched. |
+| **Reference** | Points the Teldrive file at the original message. Only for channels listed under **Settings → Storage channels**. | Owned by Teldrive from now on. |
+
+Referenced messages are managed by Teldrive like uploaded parts: deleting the file from the trash deletes the message in Telegram. Use **Copy** if the original messages must stay independent of Teldrive.
+
+**Warning:** Teldrive's orphan cleanup deletes documents in your Teldrive storage channels that no file uses. If you add an existing channel full of documents as a storage channel, import it right away (Automatic mode references every document) so that its documents are not treated as orphans.
+
+## Names, duplicates and repeated imports
+
+- A file keeps the document's file name. Videos and other media sent without a file name are named after the first line of the message caption, or `video_<message id>.mp4` when there is none.
+- Name clashes in the destination folder are resolved by renaming (`name (1).mp4`) unless you choose to replace existing files.
+- Repeating an import is safe: messages that are already in Teldrive, through an earlier import or as parts of uploaded files, are skipped. Run a channel scan again later to pick up new posts.
+- Empty documents, photos, and messages without a document are skipped.
+- Channels with protected content do not allow copying; their documents fail in Copy mode.
+
+## API
+
+The UI uses `POST /v1/uploads/telegram-imports`:
+
+```json
+{
+  "destination": "/Telegram/Movies",
+  "channel": "-1001234567890",
+  "scan": true,
+  "messageIds": ["12, 15-20"],
+  "links": ["https://t.me/c/1234567890/45-60"],
+  "mode": "auto",
+  "conflictPolicy": "rename"
+}
+```
+
+The response is the queued job. One request may name up to 10,000 messages through message IDs and links; channel scans have no limit.

@@ -34,6 +34,14 @@ type AccountLeaser interface {
 	LeaseAccount(ctx context.Context, userID int64, operation Operation, connections int) (AccountLease, error)
 }
 
+// PreferringAccountLeaser is an optional AccountLeaser capability. It leases
+// like LeaseAccount but favors accounts for which prefer reports true, such as
+// accounts with a warm client, over equally suitable ones. prefer is called
+// while the leaser holds its own locks, so it must not block.
+type PreferringAccountLeaser interface {
+	LeaseAccountPreferring(ctx context.Context, userID int64, operation Operation, connections int, prefer func(accountID int64) bool) (AccountLease, error)
+}
+
 type DownloadClientPoolConfig struct {
 	ReadBuffers  int
 	ReadParallel int
@@ -109,7 +117,7 @@ func (p *DownloadClientPool) OpenDownloadSession(ctx context.Context, userID int
 }
 
 func (p *DownloadClientPool) openDownloadSession(ctx context.Context, userID int64) (DownloadSession, error) {
-	lease, err := p.leaser.LeaseAccount(ctx, userID, OperationDownload, p.config.ReadParallel)
+	lease, err := p.leaseAccount(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -152,6 +160,37 @@ func (p *DownloadClientPool) openDownloadSession(ctx context.Context, userID int
 		release()
 		return nil, ErrDownloadClientPoolClosed
 	}
+}
+
+// leaseAccount leases the account for a new session. When the leaser supports
+// preferences, accounts that already have a live or starting client for the
+// user are preferred: a player that seeks opens the next range request before
+// closing the previous one, and reusing the warm client spares that request a
+// Telegram connection and authorization round trip.
+func (p *DownloadClientPool) leaseAccount(ctx context.Context, userID int64) (AccountLease, error) {
+	leaser, ok := p.leaser.(PreferringAccountLeaser)
+	if !ok {
+		return p.leaser.LeaseAccount(ctx, userID, OperationDownload, p.config.ReadParallel)
+	}
+	warm := p.warmAccounts(userID)
+	return leaser.LeaseAccountPreferring(ctx, userID, OperationDownload, p.config.ReadParallel, func(accountID int64) bool {
+		_, ok := warm[accountID]
+		return ok
+	})
+}
+
+// warmAccounts snapshots the accounts with a live or starting client for
+// userID. The snapshot keeps the pool lock out of the leaser's critical section.
+func (p *DownloadClientPool) warmAccounts(userID int64) map[int64]struct{} {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	warm := make(map[int64]struct{})
+	for key, entry := range p.entries {
+		if key.userID == userID && entry.err == nil && entry.ctx.Err() == nil {
+			warm[key.accountID] = struct{}{}
+		}
+	}
+	return warm
 }
 
 // lease returns the live warm client for key, or registers a new one that the

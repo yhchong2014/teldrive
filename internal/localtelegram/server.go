@@ -17,6 +17,7 @@ import (
 
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 
 	"github.com/tgdrive/teldrive/v2/internal/telegramstore"
 )
@@ -133,6 +134,11 @@ func (s *Server) handle(ctx context.Context, input bin.Encoder) (bin.Encoder, er
 		return s.createChannel(request)
 	case *tg.ChannelsDeleteChannelRequest:
 		return s.deleteChannel(request)
+	case *tg.MessagesGetHistoryRequest:
+		return s.getHistory(request)
+	case *tg.ContactsResolveUsernameRequest:
+		// The emulator has no public usernames.
+		return nil, tgerr.New(400, "USERNAME_NOT_OCCUPIED")
 	default:
 		return nil, fmt.Errorf("local Telegram RPC %T is not implemented", input)
 	}
@@ -361,6 +367,33 @@ func (s *Server) getMessages(request *tg.ChannelsGetMessagesRequest) *tg.Message
 		chats = append(chats, telegramChannel(channel))
 	}
 	return &tg.MessagesMessages{Messages: messages, Chats: chats}
+}
+
+// getHistory returns the channel's messages older than OffsetID, newest first.
+func (s *Server) getHistory(request *tg.MessagesGetHistoryRequest) (bin.Encoder, error) {
+	channelID, ok := inputPeerChannelID(request.Peer)
+	if !ok {
+		return nil, errors.New("local Telegram history peer is not a channel")
+	}
+	channel, exists := s.state.Channels[channelKey(channelID)]
+	if !exists {
+		return nil, tgerr.New(400, "CHANNEL_INVALID")
+	}
+	records := make([]messageRecord, 0)
+	for _, record := range s.state.Messages {
+		if record.ChannelID == channelID && (request.OffsetID <= 0 || record.ID < request.OffsetID) {
+			records = append(records, record)
+		}
+	}
+	slices.SortFunc(records, func(a, b messageRecord) int { return cmp.Compare(b.ID, a.ID) })
+	if request.Limit > 0 && len(records) > request.Limit {
+		records = records[:request.Limit]
+	}
+	messages := make([]tg.MessageClass, 0, len(records))
+	for _, record := range records {
+		messages = append(messages, s.telegramMessage(record))
+	}
+	return &tg.MessagesMessages{Messages: messages, Chats: []tg.ChatClass{telegramChannel(channel)}}, nil
 }
 
 func (s *Server) getFile(ctx context.Context, request *tg.UploadGetFileRequest) (bin.Encoder, error) {

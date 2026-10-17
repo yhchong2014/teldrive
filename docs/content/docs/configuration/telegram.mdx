@@ -34,17 +34,27 @@ Valid range: `1`–`32`. Increase only after measuring throughput and Telegram e
 ```yaml
 telegram:
   download-bots: 0
-  download-client-pool: false
+  download-client-pool: true
   download-read-buffers: 32
   download-read-parallel: 4
 ```
 
 - `download-bots`: `0` uses the authenticated user; up to `32` enables the first N enabled bots (by bot ID) for downloads.
-- `download-client-pool`: keeps one authenticated download client warm per download bot (or the user account) when enabled. Each download still goes to the least-loaded bot; idle warm clients do not count as load.
+- `download-client-pool`: keeps one authenticated download client warm per download bot (or the user account) for five idle minutes. Video players send a new range request for every seek, and a warm client answers it without connecting and authorizing again. Each download goes to the least-loaded bot; idle warm clients do not count as load, and among equally loaded bots one with a warm client is preferred, so a player's seeks stay on the bot that is already connected. Set it to `false` for request-scoped clients.
 - `download-read-buffers`: prefetched chunks per stream, range `1`–`256`.
 - `download-read-parallel`: concurrent chunk fetches per stream, range `1`–`32`.
 
 Increasing buffering/parallelism raises memory and Telegram request pressure across simultaneous downloads.
+
+With several bots, enable them for downloads so that concurrent streams spread over them:
+
+```yaml
+telegram:
+  download-bots: 12
+  download-client-pool: true
+```
+
+Files are stored on the Telegram data center of the account that uploaded them. Downloads of files stored on another data center than the downloading account's open an extra connection to that data center on first use; later reads of the same file go there directly.
 
 ## Storage channels
 

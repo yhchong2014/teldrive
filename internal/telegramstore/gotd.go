@@ -470,8 +470,8 @@ func (r *telegramRangeReader) fill(ctx context.Context, api *tg.Client, location
 		if nextRemaining <= 0 || nextSeq-emitSeq >= int64(r.parallel) {
 			return false
 		}
-		plan := planTelegramReads(nextOffset, nextRemaining, 1)[0]
 		seq := nextSeq
+		plan := planTelegramRead(nextOffset, nextRemaining, telegramReadLimit(seq))
 		nextSeq++
 		nextOffset += int64(plan.length)
 		nextRemaining -= int64(plan.length)
@@ -585,28 +585,52 @@ func (r *telegramRangeReader) fill(ctx context.Context, api *tg.Client, location
 	return nil
 }
 
+// telegramReadRamp caps the first requests of every range read. Telegram
+// answers upload.getFile only with the complete requested chunk, so a stream
+// that started with a full 1 MiB request would send its first byte only after
+// that whole chunk arrived. Starting small gets the first bytes to players
+// after a short round trip, which matters most on seeks; the following requests
+// grow back to the full chunk size for throughput.
+var telegramReadRamp = [...]int{128 * 1024, 256 * 1024, 512 * 1024}
+
+// telegramReadLimit returns the largest request size for the seq-th chunk of a
+// range read.
+func telegramReadLimit(seq int64) int {
+	if seq >= 0 && seq < int64(len(telegramReadRamp)) {
+		return telegramReadRamp[seq]
+	}
+	return telegramReadChunk
+}
+
 func planTelegramReads(offset, remaining int64, count int) []telegramReadPlan {
 	plans := make([]telegramReadPlan, 0, count)
 	for remaining > 0 && len(plans) < count {
-		requestOffset := offset / telegramReadAlign * telegramReadAlign
-		skip := int(offset - requestOffset)
-		boundaryRemaining := telegramReadChunk - int(requestOffset%telegramReadChunk)
-		maxLimit := telegramReadAlign
-		for maxLimit*2 <= boundaryRemaining {
-			maxLimit *= 2
-		}
-		length := int(min(remaining, int64(maxLimit-skip)))
-		limit := telegramReadAlign
-		for limit < skip+length {
-			limit *= 2
-		}
-		plans = append(plans, telegramReadPlan{
-			offset: requestOffset, limit: limit, skip: skip, length: length,
-		})
-		offset += int64(length)
-		remaining -= int64(length)
+		plan := planTelegramRead(offset, remaining, telegramReadChunk)
+		plans = append(plans, plan)
+		offset += int64(plan.length)
+		remaining -= int64(plan.length)
 	}
 	return plans
+}
+
+// planTelegramRead plans one upload.getFile request for the bytes starting at
+// offset. The request starts on a 4 KiB boundary, requests a power-of-two limit
+// of at most maxChunk bytes, and never crosses a 1 MiB boundary, as Telegram
+// requires for precise reads.
+func planTelegramRead(offset, remaining int64, maxChunk int) telegramReadPlan {
+	requestOffset := offset / telegramReadAlign * telegramReadAlign
+	skip := int(offset - requestOffset)
+	boundaryRemaining := telegramReadChunk - int(requestOffset%telegramReadChunk)
+	maxLimit := telegramReadAlign
+	for maxLimit*2 <= boundaryRemaining && maxLimit*2 <= maxChunk {
+		maxLimit *= 2
+	}
+	length := int(min(remaining, int64(maxLimit-skip)))
+	limit := telegramReadAlign
+	for limit < skip+length {
+		limit *= 2
+	}
+	return telegramReadPlan{offset: requestOffset, limit: limit, skip: skip, length: length}
 }
 
 func (b *telegramRangeBuffer) empty() bool {

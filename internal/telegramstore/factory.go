@@ -183,7 +183,11 @@ func (f *Factory) PooledAPI(client *telegram.Client, accountID int64, size int) 
 	if err != nil {
 		return nil, nil, fmt.Errorf("create Telegram connection pool: %w", err)
 	}
-	return tg.NewClient(f.wrapInvoker(accountID, invoker)), invoker.Close, nil
+	// Pool connections do not follow FILE_MIGRATE redirects by themselves.
+	migrating := newFileMigratingInvoker(invoker, func(ctx context.Context, dc int) (telegram.CloseInvoker, error) {
+		return client.DC(ctx, dc, int64(size))
+	})
+	return tg.NewClient(f.wrapInvoker(accountID, migrating)), migrating.Close, nil
 }
 
 // accountMiddleware returns a fresh invoke middleware chain for one Telegram

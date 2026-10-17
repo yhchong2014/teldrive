@@ -97,6 +97,10 @@ type CreateShareRes interface {
 	createShareRes()
 }
 
+type CreateTelegramImportRes interface {
+	createTelegramImportRes()
+}
+
 type CreateUploadImportRes interface {
 	createUploadImportRes()
 }

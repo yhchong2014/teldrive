@@ -35,9 +35,11 @@ import (
 	"github.com/tgdrive/teldrive/v2/internal/legacymigrate"
 	"github.com/tgdrive/teldrive/v2/internal/secureblob"
 	"github.com/tgdrive/teldrive/v2/internal/shares"
+	"github.com/tgdrive/teldrive/v2/internal/telegramimport"
 	"github.com/tgdrive/teldrive/v2/internal/telegramstore"
 	"github.com/tgdrive/teldrive/v2/internal/transfer"
 	"github.com/tgdrive/teldrive/v2/internal/uploads"
+	"github.com/tgdrive/teldrive/v2/internal/webdav"
 )
 
 var (
@@ -197,9 +199,18 @@ func New(ctx context.Context, cfg config.Config, dependencies Dependencies) (*Ap
 		return nil, fmt.Errorf("create share service: %w", err)
 	}
 	healthService := health.NewService(dependencies.Version, pool)
+	// Telegram imports need storage that can read channel history; injected
+	// test storage may not, in which case the import endpoint reports 503.
+	telegramImports, err := telegramimport.NewService(pool, uploadService, channelService, storage)
+	if err != nil && !errors.Is(err, telegramimport.ErrUnsupported) {
+		return nil, fmt.Errorf("create Telegram import service: %w", err)
+	}
 	jobRuntime, err := jobs.NewRuntimeWithServices(
 		pool, storage, cfg.Database.Schema, botService, secureCipher, cfg.Uploads.SessionTTL,
-		jobs.UploaderServices{Catalog: catalogService, Uploads: uploadService, Pipeline: uploadPipeline, ActiveKeyVersion: cfg.Encryption.ActiveKeyVersion, LocalImportRoots: cfg.Uploads.LocalImportRoots},
+		jobs.UploaderServices{
+			Catalog: catalogService, Uploads: uploadService, Pipeline: uploadPipeline, ActiveKeyVersion: cfg.Encryption.ActiveKeyVersion,
+			LocalImportRoots: cfg.Uploads.LocalImportRoots, TelegramImports: telegramImports,
+		},
 		fileService,
 	)
 	if err != nil {
@@ -218,6 +229,21 @@ func New(ctx context.Context, cfg config.Config, dependencies Dependencies) (*Ap
 	if err != nil {
 		return nil, fmt.Errorf("configure web UI: %w", err)
 	}
+	var davHandler http.Handler
+	if cfg.WebDAV.Enabled {
+		registerWebDAVMethods()
+		handler, err := webdav.New(webdav.Config{
+			Prefix: cfg.WebDAV.Prefix, ReadOnly: cfg.WebDAV.ReadOnly, UploadPartSize: int64(cfg.WebDAV.UploadPartSize),
+			EncryptUploads: cfg.WebDAV.EncryptUploads, ActiveKeyVersion: cfg.Encryption.ActiveKeyVersion,
+		}, webdav.Services{
+			Auth: authenticator, Catalog: catalogService, Uploads: uploadService, Pipeline: uploadPipeline,
+			Downloader: downloader, FileOps: fileService,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("configure WebDAV: %w", err)
+		}
+		davHandler = handler
+	}
 	mux := chi.NewRouter()
 	mux.Use(requestIDMiddleware)
 	requestSecurity, err := newRequestSecurity(cfg.HTTP.TrustedProxies)
@@ -225,6 +251,12 @@ func New(ctx context.Context, cfg config.Config, dependencies Dependencies) (*Ap
 		return nil, fmt.Errorf("configure trusted proxies: %w", err)
 	}
 	mux.Use(httpRequestLogger(dependencies.Logger, requestSecurity))
+	if davHandler != nil {
+		// WebDAV authenticates every request with an API key or token and never
+		// reads session cookies, so it bypasses the cookie CSRF and renewal
+		// middleware.
+		routeWebDAV(mux, cfg.WebDAV.Prefix, requestSecurity.middleware(davHandler))
+	}
 	routeApplication(mux, requestSecurity.middleware(browserCSRFMiddleware(sessionRenewalMiddleware(authService, httpServer))), webUI)
 
 	application := &App{

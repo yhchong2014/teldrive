@@ -83,6 +83,22 @@ func (s *ShareUpdateRequest) setDefaults() {
 }
 
 // setDefaults set default value of fields.
+func (s *TelegramImportRequest) setDefaults() {
+	{
+		val := bool(false)
+		s.Scan.SetTo(val)
+	}
+	{
+		val := TelegramImportRequestMode("auto")
+		s.Mode.SetTo(val)
+	}
+	{
+		val := TelegramImportRequestConflictPolicy("rename")
+		s.ConflictPolicy.SetTo(val)
+	}
+}
+
+// setDefaults set default value of fields.
 func (s *UploadCreateRequest) setDefaults() {
 	{
 		val := bool(false)

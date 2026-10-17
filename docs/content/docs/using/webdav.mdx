@@ -1,0 +1,57 @@
+---
+title: WebDAV
+description: Browse, stream and upload Teldrive files from file managers, media players and sync tools.
+---
+
+Teldrive serves your drive over WebDAV at `/webdav`, for example `https://drive.example.com/webdav/`. Any WebDAV client can browse folders, stream and download files, and upload, rename, move, copy and delete them.
+
+## Sign in
+
+1. Open **Settings → API keys** and create a key. Copy the secret; it is shown once.
+2. In the WebDAV client, enter any user name and the API key as the password.
+
+Clients that support tokens can send `Authorization: Bearer <api key>` instead. Revoking the key signs the client out within 30 seconds.
+
+Use HTTPS outside your local network: Basic authentication sends the key with every request. See [Reverse proxy](/deployment/reverse-proxy).
+
+## Clients
+
+| Client | How to connect |
+| --- | --- |
+| Windows Explorer | **This PC → Map network drive → Connect to a Web site…**, address `https://drive.example.com/webdav/`. |
+| macOS Finder | **Go → Connect to Server…**, address `https://drive.example.com/webdav/`. |
+| Linux file managers | `davs://drive.example.com/webdav/` (or `dav://` without TLS). |
+| VLC, Infuse, Kodi, nPlayer | Add a WebDAV network share with the same address and credentials. |
+| rclone | `rclone config create teldrive-dav webdav url=https://drive.example.com/webdav vendor=other user=me pass=$(rclone obscure <api key>)`. For full speed and features prefer the [native Teldrive backend](/rclone/setup). |
+
+Opening `/webdav/` in a browser shows a plain folder listing with download links.
+
+## Streaming
+
+Reads go through the same download pipeline as the web UI. Range requests fetch only the requested bytes from Telegram, so players start and seek without downloading the whole file, and long playback is not cut by the server's HTTP timeouts. Keep `telegram.download-client-pool` enabled (the default) for quick seeks; see [Performance tuning](/advanced/performance).
+
+## Behavior
+
+- **Delete** moves files and folders to the Teldrive trash, from which they can be restored.
+- **Copy** is a server-side Telegram copy; nothing is downloaded or uploaded.
+- **Upload** (`PUT`) replaces an existing file of the same name. Files are stored in parts of `webdav.upload-part-size`. Uploads with a known size stream straight to Telegram; uploads of unknown size are buffered one part at a time in the system temporary directory, so keep that much free space.
+- Locks are kept in memory per user so that Windows and macOS mount the drive writable. They are not shared between Teldrive instances.
+- `PROPFIND` with `Depth: infinity` is refused; clients list folders one level at a time.
+- File properties set by clients, such as Windows timestamps, are accepted and not stored.
+
+## Configuration
+
+```yaml
+webdav:
+  enabled: true
+  prefix: /webdav
+  read-only: false
+  upload-part-size: 512MB
+  encrypt-uploads: false
+```
+
+- `read-only: true` rejects every change; clients mount the drive read-only.
+- `encrypt-uploads: true` encrypts uploaded files with the active encryption key, like encrypted browser uploads.
+- `prefix` must not overlap `/api`, `/v1`, `/health` or the web UI's asset paths.
+
+All settings are listed in the [configuration reference](/configuration/reference#webdav). Behind a reverse proxy, forward the WebDAV methods (`PROPFIND`, `PROPPATCH`, `MKCOL`, `COPY`, `MOVE`, `LOCK`, `UNLOCK`) and allow large request bodies for uploads.

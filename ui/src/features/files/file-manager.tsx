@@ -9,6 +9,7 @@ import { normalizeApiError, userMessage } from "@/api/errors";
 import type { FileEntry } from "@/api/types";
 import { currentUserQueryOptions } from "@/auth/queries";
 import { BackgroundUploadDialog } from "@/components/background-upload-dialog";
+import { TelegramImportDialog } from "@/components/telegram-import-dialog";
 import { AppDialog } from "@/components/dialogs/app-dialog";
 import { isPreviewable } from "@/components/file-preview-dialog";
 import { Page, PageContent } from "@/components/page";
@@ -20,6 +21,7 @@ import UploadIcon from "~icons/gravity-ui/arrow-up-from-line";
 import FileIcon from "~icons/gravity-ui/file";
 import FolderIcon from "~icons/gravity-ui/folder";
 import SplitIcon from "~icons/gravity-ui/layout-split-columns";
+import TelegramIcon from "~icons/gravity-ui/logo-telegram";
 import PlusIcon from "~icons/gravity-ui/plus";
 import CloseIcon from "~icons/gravity-ui/xmark";
 
@@ -129,6 +131,7 @@ export function FileManagerPage({
   const [secondarySelectedKeys, setSecondarySelectedKeys] = useState<Selection>(new Set());
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [backgroundUploadOpen, setBackgroundUploadOpen] = useState(false);
+  const [telegramImportOpen, setTelegramImportOpen] = useState(false);
   const [folderName, setFolderName] = useState("");
   const [previewFile, setPreviewFile] = useState<FileEntry>();
   const [renameFile, setRenameFile] = useState<FileEntry>();
@@ -696,6 +699,7 @@ export function FileManagerPage({
                 if (key === "files") uploadFilesTriggerRef.current?.click();
                 if (key === "folder") uploadFolderTriggerRef.current?.click();
                 if (key === "background") setBackgroundUploadOpen(true);
+                if (key === "telegram") setTelegramImportOpen(true);
               }}
             >
               <Dropdown.Item id="files" textValue={t("files.uploadFiles")}>
@@ -712,6 +716,10 @@ export function FileManagerPage({
                   <Label>{t("uploads.bgTitle")}</Label>
                 </Dropdown.Item>
               ) : null}
+              <Dropdown.Item id="telegram" textValue={t("telegramImport.title")}>
+                <TelegramIcon className="size-4" />
+                <Label>{t("telegramImport.title")}</Label>
+              </Dropdown.Item>
             </Dropdown.Menu>
           </Dropdown.Popover>
         </Dropdown>
@@ -1058,6 +1066,12 @@ export function FileManagerPage({
       <BackgroundUploadDialog
         open={backgroundUploadOpen}
         onOpenChange={setBackgroundUploadOpen}
+        currentPath={activeLocation.path}
+      />
+
+      <TelegramImportDialog
+        open={telegramImportOpen}
+        onOpenChange={setTelegramImportOpen}
         currentPath={activeLocation.path}
       />
 

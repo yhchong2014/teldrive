@@ -564,6 +564,14 @@ type Session struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
+type TelegramImportSource struct {
+	UserID          int64              `json:"user_id"`
+	SourceChannelID int64              `json:"source_channel_id"`
+	SourceMessageID int64              `json:"source_message_id"`
+	FileID          pgtype.UUID        `json:"file_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
 type TelegramLoginFlow struct {
 	ID                      pgtype.UUID         `json:"id"`
 	Method                  TelegramLoginMethod `json:"method"`

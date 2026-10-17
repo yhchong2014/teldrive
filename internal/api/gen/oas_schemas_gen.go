@@ -1214,6 +1214,18 @@ type CreateShareUnprocessableEntity ErrorEnvelope
 
 func (*CreateShareUnprocessableEntity) createShareRes() {}
 
+type CreateTelegramImportServiceUnavailable ErrorEnvelope
+
+func (*CreateTelegramImportServiceUnavailable) createTelegramImportRes() {}
+
+type CreateTelegramImportUnauthorized ErrorEnvelope
+
+func (*CreateTelegramImportUnauthorized) createTelegramImportRes() {}
+
+type CreateTelegramImportUnprocessableEntity ErrorEnvelope
+
+func (*CreateTelegramImportUnprocessableEntity) createTelegramImportRes() {}
+
 type CreateUploadConflict ErrorEnvelope
 
 func (*CreateUploadConflict) createUploadRes() {}
@@ -6285,11 +6297,12 @@ func (s *Job) SetCompletedAt(val OptDateTime) {
 	s.CompletedAt = val
 }
 
-func (*Job) cancelJobRes()          {}
-func (*Job) createJobRes()          {}
-func (*Job) createUploadImportRes() {}
-func (*Job) getJobRes()             {}
-func (*Job) retryJobRes()           {}
+func (*Job) cancelJobRes()            {}
+func (*Job) createJobRes()            {}
+func (*Job) createTelegramImportRes() {}
+func (*Job) createUploadImportRes()   {}
+func (*Job) getJobRes()               {}
+func (*Job) retryJobRes()             {}
 
 type JobArgs map[string]jx.Raw
 
@@ -8765,6 +8778,98 @@ func (o OptString) Or(d string) string {
 	return d
 }
 
+// NewOptTelegramImportRequestConflictPolicy returns new OptTelegramImportRequestConflictPolicy with value set to v.
+func NewOptTelegramImportRequestConflictPolicy(v TelegramImportRequestConflictPolicy) OptTelegramImportRequestConflictPolicy {
+	return OptTelegramImportRequestConflictPolicy{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptTelegramImportRequestConflictPolicy is optional TelegramImportRequestConflictPolicy.
+type OptTelegramImportRequestConflictPolicy struct {
+	Value TelegramImportRequestConflictPolicy
+	Set   bool
+}
+
+// IsSet returns true if OptTelegramImportRequestConflictPolicy was set.
+func (o OptTelegramImportRequestConflictPolicy) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptTelegramImportRequestConflictPolicy) Reset() {
+	var v TelegramImportRequestConflictPolicy
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptTelegramImportRequestConflictPolicy) SetTo(v TelegramImportRequestConflictPolicy) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptTelegramImportRequestConflictPolicy) Get() (v TelegramImportRequestConflictPolicy, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptTelegramImportRequestConflictPolicy) Or(d TelegramImportRequestConflictPolicy) TelegramImportRequestConflictPolicy {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptTelegramImportRequestMode returns new OptTelegramImportRequestMode with value set to v.
+func NewOptTelegramImportRequestMode(v TelegramImportRequestMode) OptTelegramImportRequestMode {
+	return OptTelegramImportRequestMode{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptTelegramImportRequestMode is optional TelegramImportRequestMode.
+type OptTelegramImportRequestMode struct {
+	Value TelegramImportRequestMode
+	Set   bool
+}
+
+// IsSet returns true if OptTelegramImportRequestMode was set.
+func (o OptTelegramImportRequestMode) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptTelegramImportRequestMode) Reset() {
+	var v TelegramImportRequestMode
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptTelegramImportRequestMode) SetTo(v TelegramImportRequestMode) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptTelegramImportRequestMode) Get() (v TelegramImportRequestMode, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptTelegramImportRequestMode) Or(d TelegramImportRequestMode) TelegramImportRequestMode {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptThemePreference returns new OptThemePreference with value set to v.
 func NewOptThemePreference(v ThemePreference) OptThemePreference {
 	return OptThemePreference{
@@ -11233,6 +11338,192 @@ func (s *TelegramCodeVerifyRequest) SetFlowId(val UUID) {
 // SetCode sets the value of Code.
 func (s *TelegramCodeVerifyRequest) SetCode(val string) {
 	s.Code = val
+}
+
+// Ref: #/components/schemas/TelegramImportRequest
+type TelegramImportRequest struct {
+	// Destination folder UUID or absolute drive path from root. Missing folders of a path are created.
+	Destination string `json:"destination"`
+	// Source channel for `scan` and `messageIds`: a channel ID (with or without the Bot API -100 prefix),
+	// a public username, or a t.me link to the channel.
+	Channel OptString `json:"channel"`
+	// Import every document in `channel` that is not in TelDrive yet.
+	Scan OptBool `json:"scan"`
+	// Message IDs and inclusive ranges in `channel`, for example `12`, `15-20` or `12, 15-20`.
+	MessageIds []string `json:"messageIds"`
+	// Message links such as `https://t.me/c/1234567890/45`, `https://t.me/name/45`, or ranges such as
+	// `https://t.me/c/1234567890/45-60`.
+	Links          []string                               `json:"links"`
+	Mode           OptTelegramImportRequestMode           `json:"mode"`
+	ConflictPolicy OptTelegramImportRequestConflictPolicy `json:"conflictPolicy"`
+}
+
+// GetDestination returns the value of Destination.
+func (s *TelegramImportRequest) GetDestination() string {
+	return s.Destination
+}
+
+// GetChannel returns the value of Channel.
+func (s *TelegramImportRequest) GetChannel() OptString {
+	return s.Channel
+}
+
+// GetScan returns the value of Scan.
+func (s *TelegramImportRequest) GetScan() OptBool {
+	return s.Scan
+}
+
+// GetMessageIds returns the value of MessageIds.
+func (s *TelegramImportRequest) GetMessageIds() []string {
+	return s.MessageIds
+}
+
+// GetLinks returns the value of Links.
+func (s *TelegramImportRequest) GetLinks() []string {
+	return s.Links
+}
+
+// GetMode returns the value of Mode.
+func (s *TelegramImportRequest) GetMode() OptTelegramImportRequestMode {
+	return s.Mode
+}
+
+// GetConflictPolicy returns the value of ConflictPolicy.
+func (s *TelegramImportRequest) GetConflictPolicy() OptTelegramImportRequestConflictPolicy {
+	return s.ConflictPolicy
+}
+
+// SetDestination sets the value of Destination.
+func (s *TelegramImportRequest) SetDestination(val string) {
+	s.Destination = val
+}
+
+// SetChannel sets the value of Channel.
+func (s *TelegramImportRequest) SetChannel(val OptString) {
+	s.Channel = val
+}
+
+// SetScan sets the value of Scan.
+func (s *TelegramImportRequest) SetScan(val OptBool) {
+	s.Scan = val
+}
+
+// SetMessageIds sets the value of MessageIds.
+func (s *TelegramImportRequest) SetMessageIds(val []string) {
+	s.MessageIds = val
+}
+
+// SetLinks sets the value of Links.
+func (s *TelegramImportRequest) SetLinks(val []string) {
+	s.Links = val
+}
+
+// SetMode sets the value of Mode.
+func (s *TelegramImportRequest) SetMode(val OptTelegramImportRequestMode) {
+	s.Mode = val
+}
+
+// SetConflictPolicy sets the value of ConflictPolicy.
+func (s *TelegramImportRequest) SetConflictPolicy(val OptTelegramImportRequestConflictPolicy) {
+	s.ConflictPolicy = val
+}
+
+// Merged schema.
+type TelegramImportRequestConflictPolicy string
+
+const (
+	TelegramImportRequestConflictPolicyFail    TelegramImportRequestConflictPolicy = "fail"
+	TelegramImportRequestConflictPolicyReplace TelegramImportRequestConflictPolicy = "replace"
+	TelegramImportRequestConflictPolicyRename  TelegramImportRequestConflictPolicy = "rename"
+)
+
+// AllValues returns all TelegramImportRequestConflictPolicy values.
+func (TelegramImportRequestConflictPolicy) AllValues() []TelegramImportRequestConflictPolicy {
+	return []TelegramImportRequestConflictPolicy{
+		TelegramImportRequestConflictPolicyFail,
+		TelegramImportRequestConflictPolicyReplace,
+		TelegramImportRequestConflictPolicyRename,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s TelegramImportRequestConflictPolicy) MarshalText() ([]byte, error) {
+	switch s {
+	case TelegramImportRequestConflictPolicyFail:
+		return []byte(s), nil
+	case TelegramImportRequestConflictPolicyReplace:
+		return []byte(s), nil
+	case TelegramImportRequestConflictPolicyRename:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *TelegramImportRequestConflictPolicy) UnmarshalText(data []byte) error {
+	switch TelegramImportRequestConflictPolicy(data) {
+	case TelegramImportRequestConflictPolicyFail:
+		*s = TelegramImportRequestConflictPolicyFail
+		return nil
+	case TelegramImportRequestConflictPolicyReplace:
+		*s = TelegramImportRequestConflictPolicyReplace
+		return nil
+	case TelegramImportRequestConflictPolicyRename:
+		*s = TelegramImportRequestConflictPolicyRename
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Merged schema.
+type TelegramImportRequestMode string
+
+const (
+	TelegramImportRequestModeAuto      TelegramImportRequestMode = "auto"
+	TelegramImportRequestModeReference TelegramImportRequestMode = "reference"
+	TelegramImportRequestModeCopy      TelegramImportRequestMode = "copy"
+)
+
+// AllValues returns all TelegramImportRequestMode values.
+func (TelegramImportRequestMode) AllValues() []TelegramImportRequestMode {
+	return []TelegramImportRequestMode{
+		TelegramImportRequestModeAuto,
+		TelegramImportRequestModeReference,
+		TelegramImportRequestModeCopy,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s TelegramImportRequestMode) MarshalText() ([]byte, error) {
+	switch s {
+	case TelegramImportRequestModeAuto:
+		return []byte(s), nil
+	case TelegramImportRequestModeReference:
+		return []byte(s), nil
+	case TelegramImportRequestModeCopy:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *TelegramImportRequestMode) UnmarshalText(data []byte) error {
+	switch TelegramImportRequestMode(data) {
+	case TelegramImportRequestModeAuto:
+		*s = TelegramImportRequestModeAuto
+		return nil
+	case TelegramImportRequestModeReference:
+		*s = TelegramImportRequestModeReference
+		return nil
+	case TelegramImportRequestModeCopy:
+		*s = TelegramImportRequestModeCopy
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 type TelegramLoginStartBadRequest ErrorEnvelope

@@ -3056,6 +3056,52 @@ paths:
         - BearerAuth: []
         - CookieAuth: []
         - ExternalApiKeyAuth: []
+  /v1/uploads/telegram-imports:
+    post:
+      operationId: createTelegramImport
+      description: |-
+        Queue an import of documents that already exist in Telegram channels,
+        without downloading or uploading them again. Progress and results are
+        reported as the job output.
+      parameters: []
+      responses:
+        "202":
+          description: The request has been accepted for processing, but processing has
+            not yet completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "401":
+          description: Access is unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "422":
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Service unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+      tags:
+        - Uploads
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TelegramImportRequest"
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+        - ExternalApiKeyAuth: []
   /v1/uploads/{uploadId}:
     get:
       operationId: getUpload
@@ -7223,6 +7269,56 @@ components:
         encryption:
           type: boolean
           default: false
+    TelegramImportMode:
+      type: string
+      enum:
+        - auto
+        - reference
+        - copy
+    TelegramImportRequest:
+      type: object
+      required:
+        - destination
+      properties:
+        destination:
+          type: string
+          description: Destination folder UUID or absolute drive path from root. Missing
+            folders of a path are created.
+        channel:
+          type: string
+          description: >-
+            Source channel for `scan` and `messageIds`: a channel ID (with or
+            without
+
+            the Bot API -100 prefix), a public username, or a t.me link to the
+            channel.
+        scan:
+          type: boolean
+          description: Import every document in `channel` that is not in TelDrive yet.
+          default: false
+        messageIds:
+          type: array
+          items:
+            type: string
+          description: Message IDs and inclusive ranges in `channel`, for example `12`,
+            `15-20` or `12, 15-20`.
+        links:
+          type: array
+          items:
+            type: string
+          description: >-
+            Message links such as `https://t.me/c/1234567890/45`,
+            `https://t.me/name/45`,
+
+            or ranges such as `https://t.me/c/1234567890/45-60`.
+        mode:
+          allOf:
+            - $ref: "#/components/schemas/TelegramImportMode"
+          default: auto
+        conflictPolicy:
+          allOf:
+            - $ref: "#/components/schemas/NameConflictPolicy"
+          default: rename
     UploadCreateRequest:
       type: object
       required:

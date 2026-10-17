@@ -111,6 +111,43 @@ model UploadImportRequest {
   encryption?: boolean = false;
 }
 
+enum TelegramImportMode {
+  /** Reference documents of your TelDrive channels and copy the others. */
+  auto: "auto",
+
+  /** Point files at the original messages. Only for your TelDrive channels. */
+  reference: "reference",
+
+  /** Copy documents into the selected storage channel, leaving the originals untouched. */
+  copy: "copy",
+}
+
+model TelegramImportRequest {
+  /** Destination folder UUID or absolute drive path from root. Missing folders of a path are created. */
+  destination: string;
+
+  /**
+   * Source channel for `scan` and `messageIds`: a channel ID (with or without
+   * the Bot API -100 prefix), a public username, or a t.me link to the channel.
+   */
+  channel?: string;
+
+  /** Import every document in `channel` that is not in TelDrive yet. */
+  scan?: boolean = false;
+
+  /** Message IDs and inclusive ranges in `channel`, for example `12`, `15-20` or `12, 15-20`. */
+  messageIds?: string[];
+
+  /**
+   * Message links such as `https://t.me/c/1234567890/45`, `https://t.me/name/45`,
+   * or ranges such as `https://t.me/c/1234567890/45-60`.
+   */
+  links?: string[];
+
+  mode?: TelegramImportMode = TelegramImportMode.auto;
+  conflictPolicy?: NameConflictPolicy = NameConflictPolicy.rename;
+}
+
 model UploadPartHeaders {
   @header("Content-Type")
   contentType: "application/octet-stream";
@@ -179,6 +216,20 @@ namespace Uploads {
   op createImport(@body body: UploadImportRequest):
     | JsonResponse<202, Job>
     | ErrorResponse<400>
+    | ErrorResponse<401>
+    | ErrorResponse<422>
+    | ErrorResponse<503>;
+
+  /**
+   * Queue an import of documents that already exist in Telegram channels,
+   * without downloading or uploading them again. Progress and results are
+   * reported as the job output.
+   */
+  @post
+  @route("/telegram-imports")
+  @operationId("createTelegramImport")
+  op createTelegramImport(@body body: TelegramImportRequest):
+    | JsonResponse<202, Job>
     | ErrorResponse<401>
     | ErrorResponse<422>
     | ErrorResponse<503>;

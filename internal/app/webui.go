@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/tgdrive/teldrive/v2/internal/webdav"
 	embeddedui "github.com/tgdrive/teldrive/v2/ui"
 )
 
@@ -86,6 +88,25 @@ func readWebUIFile(files fs.FS, name string) (*bytes.Reader, fs.FileInfo, error)
 		return nil, nil, err
 	}
 	return bytes.NewReader(content), stat, nil
+}
+
+var webDAVMethodsOnce sync.Once
+
+// registerWebDAVMethods teaches chi the WebDAV methods. chi answers unknown
+// methods with 405 before routing, and routes only accept methods registered
+// before they were added, so this runs before the router is built.
+func registerWebDAVMethods() {
+	webDAVMethodsOnce.Do(func() {
+		for _, method := range webdav.Methods {
+			chi.RegisterMethod(method)
+		}
+	})
+}
+
+// routeWebDAV mounts the WebDAV endpoint at prefix and below it.
+func routeWebDAV(router chi.Router, prefix string, handler http.Handler) {
+	router.Handle(prefix, handler)
+	router.Handle(prefix+"/*", handler)
 }
 
 func routeApplication(router chi.Router, apiServer http.Handler, ui http.Handler) {

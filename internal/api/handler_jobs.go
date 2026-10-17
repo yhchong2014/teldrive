@@ -15,7 +15,9 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	"github.com/tgdrive/teldrive/v2/internal/api/gen"
+	"github.com/tgdrive/teldrive/v2/internal/db/sqlcgen"
 	"github.com/tgdrive/teldrive/v2/internal/jobs"
+	"github.com/tgdrive/teldrive/v2/internal/telegramimport"
 )
 
 func (h *Handler) ListJobs(ctx context.Context, params gen.ListJobsParams) (gen.ListJobsRes, error) {
@@ -126,6 +128,54 @@ func (h *Handler) CreateUploadImport(ctx context.Context, req *gen.UploadImportR
 		args.Sources = append(args.Sources, item)
 	}
 	item, err := h.Jobs.InsertUploadBatch(ctx, args)
+	if err != nil {
+		return nil, mapServiceError(err)
+	}
+	response := jobResponse(item)
+	return &response, nil
+}
+
+func (h *Handler) CreateTelegramImport(ctx context.Context, req *gen.TelegramImportRequest) (gen.CreateTelegramImportRes, error) {
+	if h.Jobs == nil || req == nil {
+		return nil, mapServiceError(ErrOperationUnavailable)
+	}
+	userID, err := UserIDFromContext(ctx)
+	if err != nil {
+		return nil, mapServiceError(err)
+	}
+	destination := strings.TrimSpace(req.Destination)
+	if destination == "" {
+		return nil, problem(http.StatusUnprocessableEntity, "invalid_telegram_import", "destination must be a folder UUID or absolute drive path", nil)
+	}
+	if !strings.HasPrefix(destination, "/") {
+		if _, err := uuid.Parse(destination); err != nil {
+			return nil, problem(http.StatusUnprocessableEntity, "invalid_telegram_import", "destination must be a folder UUID or absolute drive path", nil)
+		}
+	}
+	sources, err := telegramimport.ParseSources(telegramimport.Request{
+		Channel: req.Channel.Or(""), Scan: req.Scan.Or(false),
+		MessageIDs: req.MessageIds, Links: req.Links,
+	})
+	if err != nil {
+		return nil, problem(http.StatusUnprocessableEntity, "invalid_telegram_import", strings.TrimPrefix(err.Error(), telegramimport.ErrInvalidSource.Error()+": "), err)
+	}
+	mode := string(telegramimport.ModeAuto)
+	if value, ok := req.Mode.Get(); ok {
+		mode = string(value)
+	}
+	if _, err := telegramimport.ParseMode(mode); err != nil {
+		return nil, problem(http.StatusUnprocessableEntity, "invalid_telegram_import", "mode must be auto, reference or copy", err)
+	}
+	policy := string(sqlcgen.NameConflictPolicyRename)
+	if value, ok := req.ConflictPolicy.Get(); ok {
+		policy = string(value)
+	}
+	item, err := h.Jobs.InsertTelegramImport(ctx, jobs.TelegramImportArgs{
+		UserID: userID, Destination: destination, Sources: sources, Mode: mode, ConflictPolicy: policy,
+	})
+	if errors.Is(err, jobs.ErrRuntimeNotConfigured) {
+		return nil, problem(http.StatusServiceUnavailable, "telegram_import_unavailable", "Telegram imports are not available on this server", err)
+	}
 	if err != nil {
 		return nil, mapServiceError(err)
 	}

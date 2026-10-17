@@ -209,7 +209,7 @@
     "download-client-pool" = lib.mkOption {
       type = lib.types.nullOr (lib.types.bool);
       default = null;
-      description = "Keep authenticated Telegram download clients warm between HTTP requests (Default: false)";
+      description = "Keep authenticated Telegram download clients warm between HTTP requests so that streams and seeks skip connection setup (Default: true)";
     };
     "download-read-buffers" = lib.mkOption {
       type = lib.types.nullOr (lib.types.int);
@@ -380,6 +380,33 @@
       type = lib.types.nullOr (lib.types.listOf lib.types.str);
       default = null;
       description = "Absolute server directories allowed as local background-upload sources; empty disables local imports (No default; upstream applies its own.)";
+    };
+  };
+  "webdav" = {
+    "enabled" = lib.mkOption {
+      type = lib.types.nullOr (lib.types.bool);
+      default = null;
+      description = "Serve the drive over WebDAV; clients sign in with any user name and an API key as the password (Default: true)";
+    };
+    "prefix" = lib.mkOption {
+      type = lib.types.nullOr (lib.types.str);
+      default = null;
+      description = "URL path prefix of the WebDAV endpoint (Default: /webdav) [validate: required]";
+    };
+    "read-only" = lib.mkOption {
+      type = lib.types.nullOr (lib.types.bool);
+      default = null;
+      description = "Reject WebDAV requests that change files (Default: false)";
+    };
+    "upload-part-size" = lib.mkOption {
+      type = lib.types.nullOr (lib.types.str);
+      default = null;
+      description = "Telegram part size for files uploaded over WebDAV, between 16MB and 2000MB (Default: 512MB) [validate: min=16777216,max=2097152000]";
+    };
+    "encrypt-uploads" = lib.mkOption {
+      type = lib.types.nullOr (lib.types.bool);
+      default = null;
+      description = "Encrypt files uploaded over WebDAV with the active encryption key (Default: false)";
     };
   };
   "jobs" = {

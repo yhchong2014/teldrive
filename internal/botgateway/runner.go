@@ -31,6 +31,8 @@ var revokedBotTokenErrors = []string{"ACCESS_TOKEN_EXPIRED", "ACCESS_TOKEN_INVAL
 // failed before the bot was ready.
 var errBotUnreachable = errors.New("could not connect to Telegram")
 
+var _ telegramstore.PreferringAccountLeaser = (*UploadAwareRunner)(nil)
+
 // UploadAwareRunner executes uploads and optionally downloads through an enabled
 // bot. Each call goes to the eligible bot with the fewest Telegram connections
 // in flight in this process; ties rotate through the selector so idle bots are
@@ -84,7 +86,7 @@ func (r *UploadAwareRunner) run(ctx context.Context, userID int64, operation tel
 		return ErrUploadRunnerConfiguration
 	}
 	for {
-		bot, err := r.acquireBot(ctx, userID, operation, connections)
+		bot, err := r.acquireBot(ctx, userID, operation, connections, nil)
 		if err != nil {
 			return err
 		}
@@ -156,7 +158,18 @@ func (r *UploadAwareRunner) recordBotFailure(ctx context.Context, userID int64, 
 // the next unit of work, chosen like Run. Without an eligible bot the lease
 // targets the fallback runner (the user's own account) and reserves nothing.
 func (r *UploadAwareRunner) LeaseAccount(ctx context.Context, userID int64, operation telegramstore.Operation, connections int) (telegramstore.AccountLease, error) {
-	bot, err := r.acquireBot(ctx, userID, operation, connections)
+	return r.LeaseAccountPreferring(ctx, userID, operation, connections, nil)
+}
+
+// LeaseAccountPreferring is LeaseAccount with a preference for bots for which
+// prefer reports true, typically bots with a warm download client. A preferred
+// bot counts as carrying one unit of work (connections) less, so it keeps
+// serving a caller whose previous request still runs, as when a player opens
+// the range after a seek before closing the old one, instead of that request
+// going to a cold bot. Concurrent streams beyond that still spread over the
+// least-loaded bots.
+func (r *UploadAwareRunner) LeaseAccountPreferring(ctx context.Context, userID int64, operation telegramstore.Operation, connections int, prefer func(int64) bool) (telegramstore.AccountLease, error) {
+	bot, err := r.acquireBot(ctx, userID, operation, connections, prefer)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +181,7 @@ func (r *UploadAwareRunner) LeaseAccount(ctx context.Context, userID int64, oper
 
 // acquireBot reserves connections on the least-loaded eligible bot. It returns
 // nil when the operation must use the fallback runner.
-func (r *UploadAwareRunner) acquireBot(ctx context.Context, userID int64, operation telegramstore.Operation, connections int) (*sqlcgen.Bot, error) {
+func (r *UploadAwareRunner) acquireBot(ctx context.Context, userID int64, operation telegramstore.Operation, connections int, prefer func(int64) bool) (*sqlcgen.Bot, error) {
 	if r == nil || r.queries == nil || r.selector == nil || r.cipher == nil || r.factory == nil || r.fallback == nil || userID <= 0 || connections < 1 {
 		return nil, ErrUploadRunnerConfiguration
 	}
@@ -197,7 +210,7 @@ func (r *UploadAwareRunner) acquireBot(ctx context.Context, userID int64, operat
 	if err != nil {
 		return nil, fmt.Errorf("select %s bot: %w", operation, err)
 	}
-	return r.load.acquire(bots, selection, connections), nil
+	return r.load.acquire(bots, selection, connections, prefer), nil
 }
 
 func (r *UploadAwareRunner) runOnBot(ctx context.Context, userID int64, operation telegramstore.Operation, bot *sqlcgen.Bot, connections int, fn func(context.Context, *tg.Client) error) error {
@@ -283,17 +296,31 @@ type botLoad struct {
 
 // acquire reserves connections on the least-loaded bot. The scan starts at the
 // rotation offset, so equally loaded bots are chosen in round-robin order.
-func (l *botLoad) acquire(bots []*sqlcgen.Bot, rotation uint64, connections int) *sqlcgen.Bot {
+//
+// A bot for which prefer reports true counts as carrying connections less load
+// than it does, and wins ties against bots that are not preferred. prefer may
+// be nil.
+func (l *botLoad) acquire(bots []*sqlcgen.Bot, rotation uint64, connections int, prefer func(int64) bool) *sqlcgen.Bot {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.connections == nil {
 		l.connections = make(map[int64]int)
 	}
+	score := func(bot *sqlcgen.Bot) (int, bool) {
+		load := l.connections[bot.BotID]
+		if prefer != nil && prefer(bot.BotID) {
+			return load - connections, true
+		}
+		return load, false
+	}
 	start := int(rotation % uint64(len(bots)))
 	best := bots[start]
+	bestLoad, bestPreferred := score(best)
 	for offset := 1; offset < len(bots); offset++ {
-		if bot := bots[(start+offset)%len(bots)]; l.connections[bot.BotID] < l.connections[best.BotID] {
-			best = bot
+		bot := bots[(start+offset)%len(bots)]
+		load, preferred := score(bot)
+		if load < bestLoad || load == bestLoad && preferred && !bestPreferred {
+			best, bestLoad, bestPreferred = bot, load, preferred
 		}
 	}
 	l.connections[best.BotID] += connections

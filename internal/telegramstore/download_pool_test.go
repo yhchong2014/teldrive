@@ -318,3 +318,67 @@ func closeDownloadClientPool(t *testing.T, pool *DownloadClientPool) {
 		t.Fatal(err)
 	}
 }
+
+// preferringLeaserStub leases the first preferred account and otherwise falls
+// back to the rotation of accountLeaserStub.
+type preferringLeaserStub struct {
+	*accountLeaserStub
+	warmSeen [][]int64
+}
+
+func (r *preferringLeaserStub) LeaseAccountPreferring(ctx context.Context, userID int64, operation Operation, connections int, prefer func(int64) bool) (AccountLease, error) {
+	r.mu.Lock()
+	var warm []int64
+	for _, account := range r.accounts {
+		if prefer(account) {
+			warm = append(warm, account)
+		}
+	}
+	r.warmSeen = append(r.warmSeen, warm)
+	if len(warm) > 0 {
+		defer r.mu.Unlock()
+		r.active[warm[0]] += connections
+		r.leased = append(r.leased, connections)
+		return &accountLeaseStub{leaser: r.accountLeaserStub, account: warm[0], connections: connections}, nil
+	}
+	r.mu.Unlock()
+	return r.LeaseAccount(ctx, userID, operation, connections)
+}
+
+func TestDownloadClientPoolPrefersAccountsWithWarmClients(t *testing.T) {
+	runner := &preferringLeaserStub{accountLeaserStub: newAccountLeaserStub(101, 102)}
+	pool := newTestDownloadClientPool(t, runner, DownloadClientPoolConfig{})
+	ctx := context.Background()
+
+	first, err := pool.OpenDownloadSession(ctx, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The next session overlaps the first, like a player seeking: it must reuse
+	// the warm client instead of rotating to account 102.
+	second, err := pool.OpenDownloadSession(ctx, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := runner.runs.Load(); got != 1 {
+		t.Fatalf("runner starts = %d, want the warm client reused", got)
+	}
+	if a, b := first.(*gotdDownloadSession).clientID, second.(*gotdDownloadSession).clientID; a != 101 || b != 101 {
+		t.Fatalf("session client IDs = %d, %d; want 101 twice", a, b)
+	}
+	// Warm clients are per user: another user gets no preference.
+	other, err := pool.OpenDownloadSession(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	warmSeen := runner.warmSeen
+	runner.mu.Unlock()
+	if len(warmSeen) != 3 || len(warmSeen[0]) != 0 || len(warmSeen[1]) != 1 || warmSeen[1][0] != 101 || len(warmSeen[2]) != 0 {
+		t.Fatalf("warm accounts seen per lease = %v, want [] [101] []", warmSeen)
+	}
+	for _, session := range []DownloadSession{first, second, other} {
+		_ = session.Close()
+	}
+	closeDownloadClientPool(t, pool)
+}

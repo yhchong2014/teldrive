@@ -143,6 +143,10 @@ server {
 
 Adjust timeouts for your deployment; file transfers and SSE require long-lived requests.
 
+## WebDAV
+
+The Caddy and nginx examples above also serve [WebDAV](/using/webdav): they forward every HTTP method, including `PROPFIND`, `MOVE` and `LOCK`, and do not limit or buffer upload bodies. Teldrive matches the `Destination` header of `COPY` and `MOVE` by path only, so a proxy that rewrites `Host` works, but the public path must stay `/webdav` (or the configured `webdav.prefix`).
+
 ## Container binding
 
 ```yaml

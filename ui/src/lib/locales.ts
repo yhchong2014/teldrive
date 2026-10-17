@@ -388,6 +388,34 @@ export const STRINGS: Record<AppLocale, Record<string, string>> = {
     "uploads.queued": "Background upload queued",
     "uploads.queueFailed": "Failed to queue background upload",
     "uploads.invalidHeader": "Invalid header: {header}",
+    "telegramImport.title": "Import from Telegram",
+    "telegramImport.description":
+      "Add documents that are already in Telegram channels without uploading them again.",
+    "telegramImport.submit": "Queue import",
+    "telegramImport.destinationHint":
+      "Absolute drive path or folder UUID. Missing folders are created.",
+    "telegramImport.channelSection": "Channel",
+    "telegramImport.channel": "Channel ID, @username or link",
+    "telegramImport.scan": "Import every document of the channel that is not in TelDrive yet",
+    "telegramImport.messageIds": "Message IDs",
+    "telegramImport.messageIdsHint": "Optional. IDs and ranges such as 12, 15-20.",
+    "telegramImport.links": "Message links",
+    "telegramImport.linksHint":
+      "One link per line. Ranges such as https://t.me/c/1234567890/45-60 are allowed.",
+    "telegramImport.mode": "Import mode",
+    "telegramImport.mode.auto": "Automatic",
+    "telegramImport.mode.copy": "Copy",
+    "telegramImport.mode.reference": "Reference",
+    "telegramImport.modeHint.auto":
+      "References documents of your TelDrive channels and copies documents of other channels.",
+    "telegramImport.modeHint.copy":
+      "Copies each document into your storage channel on Telegram's servers. The originals stay untouched.",
+    "telegramImport.modeHint.reference":
+      "Uses the original messages without copying. Only for your TelDrive channels; deleting a file from the trash deletes its message.",
+    "telegramImport.replace": "Replace files with the same name instead of keeping both",
+    "telegramImport.nothing": "Enter a channel or at least one message link",
+    "telegramImport.channelNeedsWork": "Enable the channel scan or list message IDs",
+    "telegramImport.queued": "Telegram import queued. Follow its progress under Tasks.",
     "pub.sharedFolder": "Shared folder",
     "pub.sharedItem": "Shared item",
     "pub.accessRead": "read access",

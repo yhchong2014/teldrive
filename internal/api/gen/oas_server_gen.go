@@ -128,6 +128,13 @@ type Handler interface {
 	//
 	// POST /v1/files/{fileId}/shares
 	CreateShare(ctx context.Context, req *ShareCreateRequest, params CreateShareParams) (CreateShareRes, error)
+	// CreateTelegramImport implements createTelegramImport operation.
+	//
+	// Queue an import of documents that already exist in Telegram channels, without downloading or
+	// uploading them again. Progress and results are reported as the job output.
+	//
+	// POST /v1/uploads/telegram-imports
+	CreateTelegramImport(ctx context.Context, req *TelegramImportRequest) (CreateTelegramImportRes, error)
 	// CreateUpload implements createUpload operation.
 	//
 	// Create a durable upload session.

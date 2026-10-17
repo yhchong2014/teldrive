@@ -30,6 +30,7 @@ const (
 	CreatePublicShareFolderOperation           OperationName = "CreatePublicShareFolder"
 	CreatePublicShareUploadOperation           OperationName = "CreatePublicShareUpload"
 	CreateShareOperation                       OperationName = "CreateShare"
+	CreateTelegramImportOperation              OperationName = "CreateTelegramImport"
 	CreateUploadOperation                      OperationName = "CreateUpload"
 	CreateUploadImportOperation                OperationName = "CreateUploadImport"
 	DeleteBotOperation                         OperationName = "DeleteBot"

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -55,7 +56,7 @@ type Telegram struct {
 	ClientLogging        bool            `koanf:"client-logging" default:"false" description:"Enable verbose gotd Telegram client logs through the application logger"`
 	UploadThreads        int             `koanf:"upload-threads" default:"8" validate:"min=1,max=32" description:"Concurrent Telegram upload workers"`
 	DownloadBots         int             `koanf:"download-bots" default:"0" validate:"min=0,max=32" description:"Maximum enabled bots used for download rotation; zero uses the authenticated user"`
-	DownloadClientPool   bool            `koanf:"download-client-pool" default:"false" description:"Keep authenticated Telegram download clients warm between HTTP requests"`
+	DownloadClientPool   bool            `koanf:"download-client-pool" default:"true" description:"Keep authenticated Telegram download clients warm between HTTP requests so that streams and seeks skip connection setup"`
 	DownloadReadBuffers  int             `koanf:"download-read-buffers" default:"32" validate:"min=1,max=256" description:"Number of prefetched Telegram download chunks buffered in memory per stream"`
 	DownloadReadParallel int             `koanf:"download-read-parallel" default:"4" validate:"min=1,max=32" description:"Concurrent Telegram chunk fetches per download stream"`
 	RandomizePartNames   bool            `koanf:"randomize-part-names" default:"true" description:"Randomize Telegram document names"`
@@ -105,6 +106,14 @@ type Uploads struct {
 	LocalImportRoots []string      `koanf:"local-import-roots" default:"" description:"Absolute server directories allowed as local background-upload sources; empty disables local imports"`
 }
 
+type WebDAV struct {
+	Enabled        bool      `koanf:"enabled" default:"true" description:"Serve the drive over WebDAV; clients sign in with any user name and an API key as the password"`
+	Prefix         string    `koanf:"prefix" default:"/webdav" validate:"required" description:"URL path prefix of the WebDAV endpoint"`
+	ReadOnly       bool      `koanf:"read-only" default:"false" description:"Reject WebDAV requests that change files"`
+	UploadPartSize size.Size `koanf:"upload-part-size" default:"512MB" validate:"min=16777216,max=2097152000" description:"Telegram part size for files uploaded over WebDAV, between 16MB and 2000MB"`
+	EncryptUploads bool      `koanf:"encrypt-uploads" default:"false" description:"Encrypt files uploaded over WebDAV with the active encryption key"`
+}
+
 type Jobs struct {
 	RunWorkers bool `koanf:"run-workers" default:"true" description:"Run River background job workers in this process"`
 }
@@ -126,6 +135,7 @@ type Config struct {
 	Logging    Logging         `koanf:"logging"`
 	Events     Events          `koanf:"events"`
 	Uploads    Uploads         `koanf:"uploads"`
+	WebDAV     WebDAV          `koanf:"webdav"`
 	Jobs       Jobs            `koanf:"jobs"`
 	Cache      Cache           `koanf:"cache"`
 }
@@ -190,6 +200,21 @@ func (c Config) Validate() error {
 		value := strings.TrimSpace(root)
 		if value == "" || !filepath.IsAbs(value) {
 			problems = append(problems, fmt.Sprintf("upload local import root %q must be an absolute path", root))
+		}
+	}
+	if c.WebDAV.Enabled {
+		prefix := strings.TrimSpace(c.WebDAV.Prefix)
+		if !strings.HasPrefix(prefix, "/") || prefix != path.Clean(prefix) || prefix == "/" {
+			problems = append(problems, fmt.Sprintf("WebDAV prefix %q must be an absolute path below the root without a trailing slash", c.WebDAV.Prefix))
+		} else {
+			for _, reserved := range []string{"/api", "/v1", "/health", "/assets", "/fonts", "/images"} {
+				if prefix == reserved || strings.HasPrefix(prefix, reserved+"/") {
+					problems = append(problems, fmt.Sprintf("WebDAV prefix %q collides with %s", c.WebDAV.Prefix, reserved))
+				}
+			}
+		}
+		if c.WebDAV.EncryptUploads && c.Encryption.ActiveKeyVersion == 0 {
+			problems = append(problems, "WebDAV encrypted uploads require an active encryption key version")
 		}
 	}
 	if c.Events.ReconnectMax < c.Events.ReconnectMin {

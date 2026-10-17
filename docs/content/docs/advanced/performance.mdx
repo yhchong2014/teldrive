@@ -40,11 +40,25 @@ telegram:
   download-read-buffers: 32
   download-read-parallel: 4
   download-bots: 0
+  download-client-pool: true
 ```
 
 `download-read-parallel` controls concurrent chunk fetches per stream. `download-read-buffers` controls prefetched chunks in memory. Both multiply across simultaneous downloads.
 
 Use bots only after normal user-client downloads work correctly.
+
+## Streaming video
+
+Teldrive never downloads a whole file before streaming it. Each HTTP range request, whether from the browser player, VLC, or a WebDAV client, is served by reading the requested bytes from Telegram in parallel chunks of up to 1 MiB, prefetching at most `download-read-buffers` chunks ahead. Encrypted files are decrypted from the nearest block, so seeking works for them too.
+
+The time to the first frame after opening or seeking is dominated by setup, not bandwidth:
+
+- **Warm clients.** Players open a new range request for every seek, and MP4 files usually need a read at the end of the file before playback starts. With `download-client-pool: true` (the default) those requests reuse an authorized client; without it, each one connects and authorizes a new Telegram client first, which takes seconds.
+- **Small first reads.** Each range read starts with 128 KiB, 256 KiB and 512 KiB requests before switching to full 1 MiB chunks, so the first bytes arrive after one short round trip.
+- **Bots.** `download-bots` spreads concurrent streams over bots. Seeks of one player stay on the bot whose client is already connected.
+- **Data centers.** Files stored on another Telegram data center than the downloading account are read through an extra connection to that data center, opened once and then reused.
+
+In players, a larger network cache (VLC: *Preferences → Input/Codecs → Network caching*) smooths over Telegram latency spikes.
 
 ## PostgreSQL
 

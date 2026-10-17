@@ -133,7 +133,7 @@ Defaults are runtime values, not production recommendations.
 
 <ConfigOption name={"telegram.download-bots"} flag={"--telegram-download-bots"} env={"TELDRIVE_TELEGRAM_DOWNLOAD_BOTS"} defaultValue={"0"} description={"Maximum enabled bots used for download rotation; zero uses the authenticated user"} />
 
-<ConfigOption name={"telegram.download-client-pool"} flag={"--telegram-download-client-pool"} env={"TELDRIVE_TELEGRAM_DOWNLOAD_CLIENT_POOL"} defaultValue={"false"} description={"Keep authenticated Telegram download clients warm between HTTP requests"} />
+<ConfigOption name={"telegram.download-client-pool"} flag={"--telegram-download-client-pool"} env={"TELDRIVE_TELEGRAM_DOWNLOAD_CLIENT_POOL"} defaultValue={"true"} description={"Keep authenticated Telegram download clients warm between HTTP requests so that streams and seeks skip connection setup"} />
 
 <ConfigOption name={"telegram.download-read-buffers"} flag={"--telegram-download-read-buffers"} env={"TELDRIVE_TELEGRAM_DOWNLOAD_READ_BUFFERS"} defaultValue={"32"} description={"Number of prefetched Telegram download chunks buffered in memory per stream"} />
 
@@ -176,3 +176,15 @@ Defaults are runtime values, not production recommendations.
 <ConfigOption name={"uploads.local-import-roots"} flag={"--uploads-local-import-roots"} env={"TELDRIVE_UPLOADS_LOCAL_IMPORT_ROOTS"} defaultValue={""} description={"Absolute server directories allowed as local background-upload sources; empty disables local imports"} />
 
 <ConfigOption name={"uploads.session-ttl"} flag={"--uploads-session-ttl"} env={"TELDRIVE_UPLOADS_SESSION_TTL"} defaultValue={"168h0m0s"} description={"Lifetime of resumable upload sessions"} />
+
+## WebDAV
+
+<ConfigOption name={"webdav.enabled"} flag={"--webdav-enabled"} env={"TELDRIVE_WEBDAV_ENABLED"} defaultValue={"true"} description={"Serve the drive over WebDAV; clients sign in with any user name and an API key as the password"} />
+
+<ConfigOption name={"webdav.encrypt-uploads"} flag={"--webdav-encrypt-uploads"} env={"TELDRIVE_WEBDAV_ENCRYPT_UPLOADS"} defaultValue={"false"} description={"Encrypt files uploaded over WebDAV with the active encryption key"} />
+
+<ConfigOption name={"webdav.prefix"} flag={"--webdav-prefix"} env={"TELDRIVE_WEBDAV_PREFIX"} defaultValue={"/webdav"} description={"URL path prefix of the WebDAV endpoint"} />
+
+<ConfigOption name={"webdav.read-only"} flag={"--webdav-read-only"} env={"TELDRIVE_WEBDAV_READ_ONLY"} defaultValue={"false"} description={"Reject WebDAV requests that change files"} />
+
+<ConfigOption name={"webdav.upload-part-size"} flag={"--webdav-upload-part-size"} env={"TELDRIVE_WEBDAV_UPLOAD_PART_SIZE"} defaultValue={"512MB"} description={"Telegram part size for files uploaded over WebDAV, between 16MB and 2000MB"} />

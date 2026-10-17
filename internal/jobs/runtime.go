@@ -20,6 +20,7 @@ import (
 
 	"github.com/tgdrive/teldrive/v2/internal/bots"
 	"github.com/tgdrive/teldrive/v2/internal/catalog"
+	"github.com/tgdrive/teldrive/v2/internal/telegramimport"
 	"github.com/tgdrive/teldrive/v2/internal/telegramstore"
 	"github.com/tgdrive/teldrive/v2/internal/transfer"
 	"github.com/tgdrive/teldrive/v2/internal/uploads"
@@ -47,16 +48,17 @@ const (
 var ErrRuntimeNotConfigured = errors.New("job runtime is not configured")
 
 type Runtime struct {
-	client               *riverpro.Client[pgx.Tx]
-	pool                 *pgxpool.Pool
-	schema               string
-	purgeEnabled         bool
-	orphanCleanupEnabled bool
-	botProvisionEnabled  bool
-	uploadEnabled        bool
-	mu                   sync.Mutex
-	started              bool
-	cancel               context.CancelFunc
+	client                *riverpro.Client[pgx.Tx]
+	pool                  *pgxpool.Pool
+	schema                string
+	purgeEnabled          bool
+	orphanCleanupEnabled  bool
+	botProvisionEnabled   bool
+	uploadEnabled         bool
+	telegramImportEnabled bool
+	mu                    sync.Mutex
+	started               bool
+	cancel                context.CancelFunc
 }
 
 func NewRuntime(pool *pgxpool.Pool, storage telegramstore.Storage, purgeServices ...PurgeService) (*Runtime, error) {
@@ -78,6 +80,8 @@ type UploaderServices struct {
 	HTTPClient       *http.Client
 	ActiveKeyVersion int32
 	LocalImportRoots []string
+	// TelegramImports enables Telegram import jobs when set.
+	TelegramImports *telegramimport.Service
 }
 
 func NewRuntimeWithServices(pool *pgxpool.Pool, storage telegramstore.Storage, schema string, botService *bots.Service, encryptor riverencrypt.Encryptor, uploadSessionTTL time.Duration, uploader UploaderServices, purgeServices ...PurgeService) (*Runtime, error) {
@@ -139,6 +143,12 @@ func newRuntimeWithSchema(pool *pgxpool.Pool, storage telegramstore.Storage, sch
 			return nil, fmt.Errorf("register upload source worker: %w", err)
 		}
 	}
+	telegramImportEnabled := uploader != nil && uploader.Catalog != nil && uploader.TelegramImports != nil
+	if telegramImportEnabled {
+		if err := river.AddWorkerSafely(workers, NewTelegramImportWorker(uploader.Catalog, uploader.TelegramImports)); err != nil {
+			return nil, fmt.Errorf("register Telegram import worker: %w", err)
+		}
+	}
 	riverConfig := river.Config{
 		Schema:  schema,
 		Workers: workers,
@@ -167,6 +177,7 @@ func newRuntimeWithSchema(pool *pgxpool.Pool, storage telegramstore.Storage, sch
 	return &Runtime{
 		client: client, pool: pool, schema: schema,
 		purgeEnabled: purgeService != nil, orphanCleanupEnabled: orphanCleanupEnabled, botProvisionEnabled: botProvisionEnabled, uploadEnabled: uploadEnabled,
+		telegramImportEnabled: telegramImportEnabled,
 	}, nil
 }
 
@@ -398,6 +409,18 @@ func (r *Runtime) insertBotProvision(ctx context.Context, userID int64, botIDs [
 		ids = append(ids, fmt.Sprintf("%d", result.Job.ID))
 	}
 	return ids, nil
+}
+
+// InsertTelegramImport queues a Telegram import job.
+func (r *Runtime) InsertTelegramImport(ctx context.Context, args TelegramImportArgs) (Job, error) {
+	if r == nil || r.client == nil || !r.telegramImportEnabled || args.UserID <= 0 || len(args.Sources) == 0 {
+		return Job{}, ErrRuntimeNotConfigured
+	}
+	result, err := r.client.Insert(ctx, args, nil)
+	if err != nil {
+		return Job{}, fmt.Errorf("insert Telegram import: %w", err)
+	}
+	return jobFromRiver(result.Job), nil
 }
 
 func (r *Runtime) InsertUploadBatch(ctx context.Context, args UploadBatchArgs) (Job, error) {

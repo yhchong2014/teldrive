@@ -21,6 +21,24 @@ var validCategories = map[string]struct{}{
 	"archive": {}, "audio": {}, "document": {}, "image": {}, "video": {}, "other": {},
 }
 
+// ResolveChild returns the active file or folder named name directly inside
+// parentID; a nil parentID means the user's drive root.
+func (s *Service) ResolveChild(ctx context.Context, userID int64, parentID *uuid.UUID, name string) (*sqlcgen.File, error) {
+	if userID <= 0 {
+		return nil, ErrInvalidOwner
+	}
+	file, err := s.queries.ResolveActiveChild(ctx, sqlcgen.ResolveActiveChildParams{
+		UserID: userID, ParentID: dbtypes.OptionalUUID(parentID), Name: name,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve child: %w", err)
+	}
+	return file, nil
+}
+
 // ResolveFolderPath resolves a slash-separated folder path below rootID. A nil
 // rootID means the user's drive root; an empty path returns rootID unchanged.
 func (s *Service) ResolveFolderPath(ctx context.Context, userID int64, rootID *uuid.UUID, rawPath string) (*uuid.UUID, error) {

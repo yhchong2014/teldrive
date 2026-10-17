@@ -91,22 +91,31 @@ type CreateInput struct {
 }
 
 func (s *Service) Create(ctx context.Context, in CreateInput) (*sqlcgen.UploadSession, error) {
+	params, err := s.createSessionParams(ctx, s.queries, in)
+	if err != nil {
+		return nil, err
+	}
+	return s.queries.CreateUploadSession(ctx, params)
+}
+
+// createSessionParams validates in and builds the session row for it.
+func (s *Service) createSessionParams(ctx context.Context, queries *sqlcgen.Queries, in CreateInput) (sqlcgen.CreateUploadSessionParams, error) {
 	if in.UserID <= 0 || in.ExpectedSize < -1 {
-		return nil, ErrInvalidInput
+		return sqlcgen.CreateUploadSessionParams{}, ErrInvalidInput
 	}
 	if (in.ExpectedHashAlgorithm == nil) != (in.ExpectedHashValue == nil) {
-		return nil, ErrInvalidInput
+		return sqlcgen.CreateUploadSessionParams{}, ErrInvalidInput
 	}
 	if in.ExpectedHashAlgorithm != nil {
 		algorithm, value, err := normalizeExpectedHash(*in.ExpectedHashAlgorithm, *in.ExpectedHashValue)
 		if err != nil {
-			return nil, err
+			return sqlcgen.CreateUploadSessionParams{}, err
 		}
 		in.ExpectedHashAlgorithm = &algorithm
 		in.ExpectedHashValue = &value
 	}
 	if in.Encryption != (in.EncryptionKeyVersion != nil) {
-		return nil, ErrInvalidInput
+		return sqlcgen.CreateUploadSessionParams{}, ErrInvalidInput
 	}
 	if in.ConflictPolicy == "" {
 		in.ConflictPolicy = sqlcgen.NameConflictPolicyFail
@@ -115,17 +124,17 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*sqlcgen.UploadSe
 	case sqlcgen.NameConflictPolicyFail, sqlcgen.NameConflictPolicyReplace, sqlcgen.NameConflictPolicyRename:
 		// Applied atomically during publication.
 	default:
-		return nil, ErrInvalidInput
+		return sqlcgen.CreateUploadSessionParams{}, ErrInvalidInput
 	}
 	if in.ParentID != nil {
-		if _, err := s.queries.GetActiveFolderForUser(ctx, sqlcgen.GetActiveFolderForUserParams{
+		if _, err := queries.GetActiveFolderForUser(ctx, sqlcgen.GetActiveFolderForUserParams{
 			FolderID: dbtypes.UUID(*in.ParentID),
 			UserID:   in.UserID,
 		}); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, ErrInvalidParent
+				return sqlcgen.CreateUploadSessionParams{}, ErrInvalidParent
 			}
-			return nil, fmt.Errorf("get upload parent: %w", err)
+			return sqlcgen.CreateUploadSessionParams{}, fmt.Errorf("get upload parent: %w", err)
 		}
 	}
 	if in.PartSize <= 0 {
@@ -139,7 +148,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*sqlcgen.UploadSe
 	if id == uuid.Nil {
 		id = uuid.New()
 	}
-	return s.queries.CreateUploadSession(ctx, sqlcgen.CreateUploadSessionParams{
+	return sqlcgen.CreateUploadSessionParams{
 		ID:                    dbtypes.UUID(id),
 		UserID:                in.UserID,
 		ParentID:              dbtypes.OptionalUUID(in.ParentID),
@@ -154,7 +163,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*sqlcgen.UploadSe
 		ConflictPolicy:        in.ConflictPolicy,
 		PartSize:              in.PartSize,
 		ExpiresAt:             dbtypes.Time(s.now().UTC().Add(s.sessionTTL)),
-	})
+	}, nil
 }
 
 func (s *Service) Get(ctx context.Context, userID int64, uploadID uuid.UUID) (*sqlcgen.UploadSession, error) {
@@ -398,6 +407,23 @@ func (s *Service) Complete(ctx context.Context, userID int64, uploadID uuid.UUID
 		return nil, fmt.Errorf("begin upload completion: %w", err)
 	}
 	defer tx.Rollback(ctx)
+	file, replacedID, err := s.completeTx(ctx, tx, userID, uploadID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit upload completion: %w", err)
+	}
+	if replacedID != nil && s.catalogInvalidator != nil {
+		s.catalogInvalidator.InvalidateFiles(ctx, userID, *replacedID)
+	}
+	return file, nil
+}
+
+// completeTx publishes the upload as a file within tx. It returns the ID of a
+// file replaced by the conflict policy, whose cached entries the caller must
+// invalidate after committing.
+func (s *Service) completeTx(ctx context.Context, tx pgx.Tx, userID int64, uploadID uuid.UUID) (*sqlcgen.File, *uuid.UUID, error) {
 	q := s.queries.WithTx(tx)
 
 	session, err := q.LockUploadSessionForCompletion(ctx, sqlcgen.LockUploadSessionForCompletionParams{
@@ -405,32 +431,32 @@ func (s *Service) Complete(ctx context.Context, userID int64, uploadID uuid.UUID
 		UserID:   userID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
+		return nil, nil, ErrNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("lock upload: %w", err)
+		return nil, nil, fmt.Errorf("lock upload: %w", err)
 	}
 	if session.State == sqlcgen.UploadStateCompleted {
 		fileID, ok := dbtypes.GoogleUUID(session.FileID)
 		if !ok {
-			return nil, fmt.Errorf("completed upload has no file id")
+			return nil, nil, fmt.Errorf("completed upload has no file id")
 		}
 		file, err := q.GetFileForUser(ctx, sqlcgen.GetFileForUserParams{FileID: dbtypes.UUID(fileID), UserID: userID})
 		if err != nil {
-			return nil, fmt.Errorf("get completed file: %w", err)
+			return nil, nil, fmt.Errorf("get completed file: %w", err)
 		}
-		return file, nil
+		return file, nil, nil
 	}
 	if session.State != sqlcgen.UploadStateOpen {
-		return nil, ErrInvalidState
+		return nil, nil, ErrInvalidState
 	}
 	if !session.ExpiresAt.Time.After(s.now()) {
-		return nil, ErrExpired
+		return nil, nil, ErrExpired
 	}
 
 	completedSize, err := validateStoredParts(ctx, tx, session)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if session.ExpectedSize < 0 {
 		session, err = q.FinalizeUploadExpectedSize(ctx, sqlcgen.FinalizeUploadExpectedSizeParams{
@@ -439,12 +465,12 @@ func (s *Service) Complete(ctx context.Context, userID int64, uploadID uuid.UUID
 			UserID:       userID,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("finalize upload size: %w", err)
+			return nil, nil, fmt.Errorf("finalize upload size: %w", err)
 		}
 	}
 	blockHashSets, err := q.ListStoredUploadPartHashes(ctx, dbtypes.UUID(uploadID))
 	if err != nil {
-		return nil, fmt.Errorf("list stored upload hashes: %w", err)
+		return nil, nil, fmt.Errorf("list stored upload hashes: %w", err)
 	}
 	var hashAlgorithm, hashValue *string
 	concatenated := make([]byte, 0)
@@ -453,12 +479,12 @@ func (s *Service) Complete(ctx context.Context, userID int64, uploadID uuid.UUID
 		if len(blockHashes) == 0 {
 			sawUnhashed = true
 			if len(concatenated) > 0 || session.ExpectedHashAlgorithm.Valid {
-				return nil, ErrIncomplete
+				return nil, nil, ErrIncomplete
 			}
 			continue
 		}
 		if sawUnhashed || len(blockHashes)%treehash.DigestSize != 0 {
-			return nil, ErrIncomplete
+			return nil, nil, ErrIncomplete
 		}
 		concatenated = append(concatenated, blockHashes...)
 	}
@@ -469,18 +495,18 @@ func (s *Service) Complete(ctx context.Context, userID int64, uploadID uuid.UUID
 	}
 	if session.ExpectedHashAlgorithm.Valid {
 		if hashAlgorithm == nil || !strings.EqualFold(session.ExpectedHashAlgorithm.String, *hashAlgorithm) || !strings.EqualFold(session.ExpectedHashValue.String, *hashValue) {
-			return nil, ErrHashMismatch
+			return nil, nil, ErrHashMismatch
 		}
 	}
 	replacedID, err := prepareConflictPolicy(ctx, tx, session)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if _, err := q.MarkUploadCompleting(ctx, sqlcgen.MarkUploadCompletingParams{
 		UploadID: dbtypes.UUID(uploadID),
 		UserID:   userID,
 	}); err != nil {
-		return nil, fmt.Errorf("mark upload completing: %w", err)
+		return nil, nil, fmt.Errorf("mark upload completing: %w", err)
 	}
 
 	fileID := uuid.New()
@@ -494,37 +520,29 @@ func (s *Service) Complete(ctx context.Context, userID int64, uploadID uuid.UUID
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return nil, ErrNameConflict
+			return nil, nil, ErrNameConflict
 		}
-		return nil, fmt.Errorf("create file from upload: %w", err)
+		return nil, nil, fmt.Errorf("create file from upload: %w", err)
 	}
 	inserted, err := q.InsertFilePartsFromUpload(ctx, sqlcgen.InsertFilePartsFromUploadParams{
 		FileID:   dbtypes.UUID(fileID),
 		UploadID: dbtypes.UUID(uploadID),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("copy upload parts: %w", err)
+		return nil, nil, fmt.Errorf("copy upload parts: %w", err)
 	}
 	expectedParts := expectedPartCount(session.ExpectedSize, session.PartSize)
 	if inserted != expectedParts {
-		return nil, fmt.Errorf("copied %d upload parts, expected %d: %w", inserted, expectedParts, ErrIncomplete)
+		return nil, nil, fmt.Errorf("copied %d upload parts, expected %d: %w", inserted, expectedParts, ErrIncomplete)
 	}
 	if _, err := q.CompleteUploadSession(ctx, sqlcgen.CompleteUploadSessionParams{
 		FileID:   dbtypes.UUID(fileID),
 		UploadID: dbtypes.UUID(uploadID),
 		UserID:   userID,
 	}); err != nil {
-		return nil, fmt.Errorf("complete upload session: %w", err)
+		return nil, nil, fmt.Errorf("complete upload session: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit upload completion: %w", err)
-	}
-	if replacedID != nil {
-		if s.catalogInvalidator != nil {
-			s.catalogInvalidator.InvalidateFiles(ctx, userID, *replacedID)
-		}
-	}
-	return file, nil
+	return file, replacedID, nil
 }
 
 func prepareConflictPolicy(ctx context.Context, tx pgx.Tx, session *sqlcgen.UploadSession) (*uuid.UUID, error) {

@@ -285,6 +285,72 @@ INSERT INTO bots (bot_id, user_id, token_ciphertext, enabled) VALUES ($1, 1001, 
 	}
 }
 
+func TestDownloadClientPoolKeepsSeekOnWarmBot(t *testing.T) {
+	db := testpostgres.New(t)
+	ctx := context.Background()
+	if _, err := db.Pool.Exec(ctx, "INSERT INTO users (user_id) VALUES (1001)"); err != nil {
+		t.Fatal(err)
+	}
+	for _, botID := range []int64{101, 102, 103} {
+		if _, err := db.Pool.Exec(ctx, `
+INSERT INTO bots (bot_id, user_id, token_ciphertext, enabled) VALUES ($1, 1001, $2, true)`, botID, []byte("ciphertext")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cipher, err := secureblob.NewWithKey(bytes.Repeat([]byte{3}, 32), bytes.NewReader(bytes.Repeat([]byte{4}, 24)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	factory, err := telegramstore.NewFactory(telegramstore.FactoryConfig{AppID: 12345, AppHash: "test-hash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := NewUploadAwareRunner(db.Pool, cipher, factory, &recordingRunner{}, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var warmClients []int64
+	runner.runBotFunc = func(ctx context.Context, _ int64, bot *sqlcgen.Bot, _ int, fn func(context.Context, *tg.Client) error) error {
+		mu.Lock()
+		warmClients = append(warmClients, bot.BotID)
+		mu.Unlock()
+		return fn(telegramstore.WithClientID(ctx, bot.BotID), new(tg.Client))
+	}
+	pool, err := telegramstore.NewDownloadClientPool(runner, telegramstore.DownloadClientPoolConfig{ReadParallel: 4}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := pool.Close(closeCtx); err != nil {
+			t.Error(err)
+		}
+	})
+
+	// A player streams, then seeks five times. Each seek opens the next range
+	// before closing the previous one; every request must stay on the warm bot.
+	current, err := pool.OpenDownloadSession(ctx, 1001)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 5 {
+		next, err := pool.OpenDownloadSession(ctx, 1001)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = current.Close()
+		current = next
+	}
+	_ = current.Close()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(warmClients) != 1 {
+		t.Fatalf("warm clients started for bots %v, want one client reused by every seek", warmClients)
+	}
+}
+
 func TestUploadAwareRunnerValidation(t *testing.T) {
 	t.Parallel()
 	if _, err := NewUploadAwareRunner(nil, nil, nil, nil, 0); !errors.Is(err, ErrUploadRunnerConfiguration) {

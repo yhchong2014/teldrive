@@ -142,8 +142,12 @@ func formatValue(v reflect.Value) string {
 func title(s string) string {
 	parts := strings.Split(s, "-")
 	for i := range parts {
-		if parts[i] == "http" {
+		switch parts[i] {
+		case "http":
 			parts[i] = "HTTP"
+			continue
+		case "webdav":
+			parts[i] = "WebDAV"
 			continue
 		}
 		parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
