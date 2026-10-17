@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/gotd/td/bin"
@@ -46,6 +47,10 @@ func (m *migratingInvoker) Invoke(ctx context.Context, input bin.Encoder, output
 		if !ok {
 			return err
 		}
+		// Media lives in the datacenter that accepted the upload, so this is
+		// also the only place the file's actual location becomes visible.
+		// Distance to it decides per-connection throughput.
+		slog.InfoContext(ctx, "telegram.file_datacenter", "dc", target)
 		invoker, openErr := m.datacenter(ctx, target)
 		if openErr != nil {
 			return errors.Join(err, fmt.Errorf("open datacenter %d: %w", target, openErr))
