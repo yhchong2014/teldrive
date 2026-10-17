@@ -61,6 +61,10 @@ type CreateBotsRes interface {
 	createBotsRes()
 }
 
+type CreateChannelImportRes interface {
+	createChannelImportRes()
+}
+
 type CreateChannelRes interface {
 	createChannelRes()
 }
@@ -97,6 +101,10 @@ type CreateShareRes interface {
 	createShareRes()
 }
 
+type CreateStreamTokenRes interface {
+	createStreamTokenRes()
+}
+
 type CreateUploadImportRes interface {
 	createUploadImportRes()
 }
@@ -123,6 +131,10 @@ type DeleteJobRes interface {
 
 type DeletePeriodicJobRes interface {
 	deletePeriodicJobRes()
+}
+
+type DeleteWebDAVCredentialsRes interface {
+	deleteWebDAVCredentialsRes()
 }
 
 type DiscoverChannelsRes interface {
@@ -207,6 +219,10 @@ type GetUploadStatisticsRes interface {
 
 type GetUserPreferencesRes interface {
 	getUserPreferencesRes()
+}
+
+type GetWebDAVCredentialsRes interface {
+	getWebDAVCredentialsRes()
 }
 
 type HeadFileLegacyRes interface {
@@ -401,12 +417,20 @@ type RevokeShareRes interface {
 	revokeShareRes()
 }
 
+type ScanChannelImportRes interface {
+	scanChannelImportRes()
+}
+
 type SearchUsersRes interface {
 	searchUsersRes()
 }
 
 type SelectChannelRes interface {
 	selectChannelRes()
+}
+
+type SetWebDAVCredentialsRes interface {
+	setWebDAVCredentialsRes()
 }
 
 type StreamEventsRes interface {

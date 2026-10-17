@@ -12,7 +12,7 @@ import (
 	"github.com/tgdrive/teldrive/v2/internal/cache"
 )
 
-const defaultDownloadClientIdleTimeout = 5 * time.Minute
+const defaultDownloadClientIdleTimeout = 30 * time.Minute
 
 var ErrDownloadClientPoolClosed = errors.New("Telegram download client pool is closed")
 
@@ -34,9 +34,23 @@ type AccountLeaser interface {
 	LeaseAccount(ctx context.Context, userID int64, operation Operation, connections int) (AccountLease, error)
 }
 
+// PreferredAccountLeaser optionally pins a download to a previously chosen
+// account so repeated HTTP requests for the same media file keep using the warm
+// client that served the first one.
+type PreferredAccountLeaser interface {
+	LeasePreferredAccount(ctx context.Context, userID int64, operation Operation, connections int, preferred int64) (AccountLease, error)
+}
+
+// MultiAccountDownloadSession is implemented by the production client pool. A
+// single stream may fan its chunk requests across several Telegram accounts.
+type MultiAccountDownloadSession interface {
+	OpenDownloadSessionMulti(ctx context.Context, userID int64, accounts int, preferredAccountID int64) (DownloadSession, error)
+}
+
 type DownloadClientPoolConfig struct {
 	ReadBuffers  int
 	ReadParallel int
+	IdleTimeout  time.Duration
 }
 
 // DownloadClientPool keeps one authenticated download client warm per user and
@@ -84,6 +98,9 @@ func NewDownloadClientPool(leaser AccountLeaser, config DownloadClientPoolConfig
 	if config.ReadParallel <= 0 {
 		config.ReadParallel = defaultTelegramReadParallel
 	}
+	if config.IdleTimeout <= 0 {
+		config.IdleTimeout = defaultDownloadClientIdleTimeout
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	pool := &DownloadClientPool{
 		leaser: leaser, config: config, globalCache: c, ctx: ctx, cancel: cancel,
@@ -97,61 +114,140 @@ func NewDownloadClientPool(leaser AccountLeaser, config DownloadClientPoolConfig
 // client. When the leased account turns out to be revoked before the client is
 // ready, the leaser has already dropped it, so another account is leased.
 func (p *DownloadClientPool) OpenDownloadSession(ctx context.Context, userID int64) (DownloadSession, error) {
+	return p.OpenDownloadSessionMulti(ctx, userID, 1, 0)
+}
+
+// OpenDownloadSessionMulti leases up to accounts distinct Telegram accounts and
+// returns one session that rotates chunk requests across all of them. A
+// preferred account, typically carried by a signed stream token, is used first
+// so repeated requests for the same file reuse the same warm client.
+func (p *DownloadClientPool) OpenDownloadSessionMulti(ctx context.Context, userID int64, accounts int, preferredAccountID int64) (DownloadSession, error) {
 	if p == nil || userID <= 0 {
 		return nil, ErrInvalidRequest
 	}
+	if accounts < 1 {
+		accounts = 1
+	}
 	for {
-		session, err := p.openDownloadSession(ctx, userID)
+		session, err := p.openDownloadSessionMulti(ctx, userID, accounts, preferredAccountID)
 		if !errors.Is(err, ErrAccountRevoked) {
 			return session, err
 		}
 	}
 }
 
-func (p *DownloadClientPool) openDownloadSession(ctx context.Context, userID int64) (DownloadSession, error) {
-	lease, err := p.leaser.LeaseAccount(ctx, userID, OperationDownload, p.config.ReadParallel)
-	if err != nil {
-		return nil, err
-	}
-	entry, created, err := p.lease(downloadClientKey{userID: userID, accountID: lease.AccountID()})
-	if err != nil {
-		lease.Release()
-		return nil, err
-	}
-	if created {
-		p.start(entry, lease)
-	}
-	release := func() {
-		p.release(entry)
-		lease.Release()
-	}
-	select {
-	case <-entry.ready:
-		p.mu.Lock()
-		api, runErr := entry.api, entry.err
-		p.mu.Unlock()
-		if api == nil {
-			release()
-			if runErr == nil {
-				runErr = ErrClientUnavailable
-			}
-			return nil, runErr
+func (p *DownloadClientPool) openDownloadSessionMulti(ctx context.Context, userID int64, accounts int, preferredAccountID int64) (DownloadSession, error) {
+	leases := make([]AccountLease, 0, accounts)
+	seen := make(map[int64]struct{}, accounts)
+	releaseLeases := func() {
+		for _, lease := range leases {
+			lease.Release()
 		}
-		return &gotdDownloadSession{
-			clientID:             entry.clientID,
-			clientFn:             func() (*tg.Client, error) { return p.client(entry, api) },
-			closeFn:              func() error { release(); return nil },
-			downloadReadBuffers:  p.config.ReadBuffers,
-			downloadReadParallel: p.config.ReadParallel,
-			globalCache:          p.globalCache,
-		}, nil
-	case <-ctx.Done():
-		release()
-		return nil, ctx.Err()
-	case <-p.ctx.Done():
-		release()
-		return nil, ErrDownloadClientPoolClosed
 	}
+
+	if preferredAccountID > 0 {
+		lease, err := p.leaseAccount(ctx, userID, preferredAccountID)
+		if err == nil {
+			leases = append(leases, lease)
+			seen[lease.AccountID()] = struct{}{}
+		}
+	}
+	var firstErr error
+	for len(leases) < accounts {
+		lease, err := p.leaser.LeaseAccount(ctx, userID, OperationDownload, p.config.ReadParallel)
+		if err != nil {
+			firstErr = err
+			break
+		}
+		if _, duplicate := seen[lease.AccountID()]; duplicate {
+			lease.Release()
+			break
+		}
+		seen[lease.AccountID()] = struct{}{}
+		leases = append(leases, lease)
+	}
+	if len(leases) == 0 {
+		if firstErr != nil {
+			return nil, firstErr
+		}
+		return nil, ErrClientUnavailable
+	}
+
+	clients := make([]sessionClient, 0, len(leases))
+	for _, lease := range leases {
+		entry, created, err := p.lease(downloadClientKey{userID: userID, accountID: lease.AccountID()})
+		if err != nil {
+			lease.Release()
+			continue
+		}
+		if created {
+			p.start(entry, lease)
+		}
+		release := func() {
+			p.release(entry)
+			lease.Release()
+		}
+		select {
+		case <-entry.ready:
+			p.mu.Lock()
+			api, runErr := entry.api, entry.err
+			clientID := entry.clientID
+			p.mu.Unlock()
+			if api == nil {
+				release()
+				if firstErr == nil && runErr != nil {
+					firstErr = runErr
+				}
+				continue
+			}
+			clients = append(clients, sessionClient{
+				api: api, clientID: clientID,
+				close: func() error {
+					release()
+					return nil
+				},
+			})
+		case <-ctx.Done():
+			release()
+			releaseLeases()
+			return nil, ctx.Err()
+		case <-p.ctx.Done():
+			release()
+			releaseLeases()
+			return nil, ErrDownloadClientPoolClosed
+		}
+	}
+	if len(clients) == 0 {
+		if firstErr != nil {
+			return nil, firstErr
+		}
+		return nil, ErrClientUnavailable
+	}
+	return &gotdDownloadSession{
+		clients:              clients,
+		clientID:             clients[0].clientID,
+		downloadReadBuffers:  p.config.ReadBuffers,
+		downloadReadParallel: p.config.ReadParallel,
+		globalCache:          p.globalCache,
+	}, nil
+}
+
+func (p *DownloadClientPool) leaseAccount(ctx context.Context, userID, preferredAccountID int64) (AccountLease, error) {
+	if preferred, ok := p.leaser.(PreferredAccountLeaser); ok {
+		return preferred.LeasePreferredAccount(ctx, userID, OperationDownload, p.config.ReadParallel, preferredAccountID)
+	}
+	return p.leaser.LeaseAccount(ctx, userID, OperationDownload, p.config.ReadParallel)
+}
+
+// Warm connects the download client for an account without starting a stream.
+// The pool keeps it alive afterwards so the player's first request does not pay
+// the Telegram connect and authentication cost.
+func (p *DownloadClientPool) Warm(ctx context.Context, userID, accountID int64) error {
+	session, err := p.OpenDownloadSessionMulti(ctx, userID, 1, accountID)
+	if err != nil {
+		return err
+	}
+	return session.Close()
 }
 
 // lease returns the live warm client for key, or registers a new one that the
@@ -221,7 +317,7 @@ func (p *DownloadClientPool) release(entry *downloadClientEntry) {
 }
 
 func (p *DownloadClientPool) reap() {
-	interval := defaultDownloadClientIdleTimeout / 2
+	interval := p.config.IdleTimeout / 2
 	ticker := time.NewTicker(interval)
 	defer func() {
 		ticker.Stop()
@@ -241,7 +337,7 @@ func (p *DownloadClientPool) reapIdle(now time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, entry := range p.entries {
-		if entry.refs == 0 && now.Sub(entry.lastUsed) >= defaultDownloadClientIdleTimeout {
+		if entry.refs == 0 && now.Sub(entry.lastUsed) >= p.config.IdleTimeout {
 			entry.cancel()
 		}
 	}

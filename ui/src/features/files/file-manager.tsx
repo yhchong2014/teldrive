@@ -24,11 +24,19 @@ import PlusIcon from "~icons/gravity-ui/plus";
 import CloseIcon from "~icons/gravity-ui/xmark";
 
 import { useFileClipboardStore } from "./clipboard-store";
-import { absoluteFileDownloadUrl, copyText, startFileDownload } from "./download";
+import {
+  absoluteFileDownloadUrl,
+  absoluteStreamUrl,
+  copyText,
+  createStreamToken,
+  playerUrl,
+  startFileDownload,
+} from "./download";
 import { FileActionDialogs } from "./file-action-dialogs";
+import { ImportDialog } from "./import-dialog";
 import { useAppLocale } from "@/lib/locale";
 import { FileBrowser } from "./file-browser";
-import { FileSelectionToolbar } from "./file-selection-toolbar";
+import { FileSelectionToolbar, type PlayerAction } from "./file-selection-toolbar";
 import { useFileActions } from "./mutations";
 import { useInfiniteFilePages } from "./queries";
 import { SearchControls } from "./search-controls";
@@ -129,6 +137,7 @@ export function FileManagerPage({
   const [secondarySelectedKeys, setSecondarySelectedKeys] = useState<Selection>(new Set());
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [backgroundUploadOpen, setBackgroundUploadOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [folderName, setFolderName] = useState("");
   const [previewFile, setPreviewFile] = useState<FileEntry>();
   const [renameFile, setRenameFile] = useState<FileEntry>();
@@ -585,6 +594,21 @@ export function FileManagerPage({
     startFileDownload(file);
   };
 
+  const openInPlayer = async (file: FileEntry, action: PlayerAction) => {
+    try {
+      const token = await createStreamToken(file.id);
+      const url = absoluteStreamUrl(token.path);
+      if (action === "copy") {
+        await copyText(url);
+        toast.success(t("selection.streamLinkCopied"));
+        return;
+      }
+      window.location.href = playerUrl(action, url);
+    } catch (error) {
+      toast.error(t("selection.streamLinkFailed"), { description: userMessage(error) });
+    }
+  };
+
   const copyDownloadLinks = async (pane: PaneId) => {
     const selectedFiles = paneSelectedFiles(pane);
     try {
@@ -696,6 +720,7 @@ export function FileManagerPage({
                 if (key === "files") uploadFilesTriggerRef.current?.click();
                 if (key === "folder") uploadFolderTriggerRef.current?.click();
                 if (key === "background") setBackgroundUploadOpen(true);
+                if (key === "telegram") setImportDialogOpen(true);
               }}
             >
               <Dropdown.Item id="files" textValue={t("files.uploadFiles")}>
@@ -705,6 +730,10 @@ export function FileManagerPage({
               <Dropdown.Item id="folder" textValue={t("files.uploadFolder")}>
                 <FolderIcon className="size-4" />
                 <Label>{t("files.uploadFolder")}</Label>
+              </Dropdown.Item>
+              <Dropdown.Item id="telegram" textValue={t("import.title")}>
+                <FileIcon className="size-4" />
+                <Label>{t("import.title")}</Label>
               </Dropdown.Item>
               {canLocalImport ? (
                 <Dropdown.Item id="background" textValue={t("uploads.bgTitle")}>
@@ -813,6 +842,7 @@ export function FileManagerPage({
           setShareFile(selectedFiles[0]);
         }}
         onDownload={() => startFileDownload(selectedFiles[0])}
+        onOpenPlayer={(action) => void openInPlayer(selectedFiles[0], action)}
         onCopyDownloadLinks={() => void copyDownloadLinks(pane)}
         onMove={() => {
           setActivePane(pane);
@@ -1059,6 +1089,13 @@ export function FileManagerPage({
         open={backgroundUploadOpen}
         onOpenChange={setBackgroundUploadOpen}
         currentPath={activeLocation.path}
+      />
+
+      <ImportDialog
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+        parentId={activeLocation.parentId}
+        parentPath={activeLocation.path}
       />
 
       <FileActionDialogs

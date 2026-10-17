@@ -257,6 +257,28 @@ model FileContentRequestOptions {
   /** Force a browser download instead of inline display. */
   @query
   download?: "1";
+
+  /** Signed stream token for media players that cannot send an Authorization header. */
+  @query
+  stream_token?: string;
+}
+
+model FileHeadRequestOptions {
+  /** Signed stream token for media players that cannot send an Authorization header. */
+  @query
+  stream_token?: string;
+}
+
+model StreamToken {
+  /** Absolute server path including the signed token query parameter. */
+  path: string;
+
+  token: string;
+  expiresAt: utcDateTime;
+  sessionId: string;
+
+  /** Telegram account that will serve the stream, when known. */
+  accountId?: int64;
 }
 
 model FileContentResponse {
@@ -456,6 +478,7 @@ namespace Files {
   @get
   @route("/{fileId}/content/{fileName}")
   @operationId("downloadFile")
+  @useAuth(FileContentAuth)
   op download(
     ...FileContentRequestOptions,
     @path fileId: Uuid,
@@ -474,7 +497,8 @@ namespace Files {
   @head
   @route("/{fileId}/content/{fileName}")
   @operationId("headFile")
-  op head(@path fileId: Uuid, @path fileName: string):
+  @useAuth(FileContentAuth)
+  op head(@path fileId: Uuid, @path fileName: string, ...FileHeadRequestOptions):
     | FileHeadResponse
     | ErrorResponse<401>
     | ErrorResponse<404>;
@@ -483,6 +507,7 @@ namespace Files {
   @get
   @route("/{fileId}/content")
   @operationId("downloadFileLegacy")
+  @useAuth(FileContentAuth)
   op downloadLegacy(...FileContentRequestOptions, @path fileId: Uuid):
     | FileContentResponse
     | FilePartialContentResponse
@@ -497,8 +522,18 @@ namespace Files {
   @head
   @route("/{fileId}/content")
   @operationId("headFileLegacy")
-  op headLegacy(@path fileId: Uuid):
+  @useAuth(FileContentAuth)
+  op headLegacy(@path fileId: Uuid, ...FileHeadRequestOptions):
     | FileHeadResponse
+    | ErrorResponse<401>
+    | ErrorResponse<404>;
+
+  /** Issue a short-lived signed URL that media players such as VLC can open directly. */
+  @post
+  @route("/{fileId}/stream-token")
+  @operationId("createStreamToken")
+  op createStreamToken(@path fileId: Uuid):
+    | JsonResponse<200, StreamToken>
     | ErrorResponse<401>
     | ErrorResponse<404>;
 
@@ -565,6 +600,27 @@ namespace Files {
   @route("/statistics/drive")
   @operationId("getDriveStatistics")
   op driveStatistics(): JsonResponse<200, DriveStatistics> | ErrorResponse<401>;
+
+  /** List documents forwarded into a Teldrive channel that are not indexed yet. */
+  @post
+  @route("/import/scan")
+  @operationId("scanChannelImport")
+  op scanImport(@body body: ImportScanRequest):
+    | JsonResponse<200, ImportScanResponse>
+    | ErrorResponse<401>
+    | ErrorResponse<404>
+    | ErrorResponse<422>;
+
+  /** Index existing Telegram documents without uploading them again. */
+  @post
+  @route("/import")
+  @operationId("createChannelImport")
+  op createImport(@body body: ImportRequest):
+    | JsonResponse<202, ImportJob>
+    | ErrorResponse<401>
+    | ErrorResponse<404>
+    | ErrorResponse<409>
+    | ErrorResponse<422>;
 }
 
 @tag("Folders")

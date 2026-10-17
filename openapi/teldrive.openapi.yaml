@@ -27,6 +27,7 @@ tags:
   - name: Jobs
   - name: Periodic Jobs
   - name: Storage
+  - name: Settings
 paths:
   /health/live:
     get:
@@ -2183,6 +2184,7 @@ paths:
         - $ref: "#/components/parameters/FileContentRequestOptions.range"
         - $ref: "#/components/parameters/FileContentRequestOptions.ifNoneMatch"
         - $ref: "#/components/parameters/FileContentRequestOptions.download"
+        - $ref: "#/components/parameters/FileContentRequestOptions.stream_token"
         - name: fileId
           in: path
           required: true
@@ -2303,6 +2305,7 @@ paths:
         - BearerAuth: []
         - CookieAuth: []
         - ExternalApiKeyAuth: []
+        - StreamTokenAuth: []
     head:
       operationId: headFile
       description: Return content metadata without streaming the file.
@@ -2317,6 +2320,7 @@ paths:
           required: true
           schema:
             type: string
+        - $ref: "#/components/parameters/FileHeadRequestOptions"
       responses:
         "200":
           description: The request has succeeded.
@@ -2363,6 +2367,7 @@ paths:
         - BearerAuth: []
         - CookieAuth: []
         - ExternalApiKeyAuth: []
+        - StreamTokenAuth: []
   /v1/files/{fileId}/content:
     get:
       operationId: downloadFileLegacy
@@ -2371,6 +2376,7 @@ paths:
         - $ref: "#/components/parameters/FileContentRequestOptions.range"
         - $ref: "#/components/parameters/FileContentRequestOptions.ifNoneMatch"
         - $ref: "#/components/parameters/FileContentRequestOptions.download"
+        - $ref: "#/components/parameters/FileContentRequestOptions.stream_token"
         - name: fileId
           in: path
           required: true
@@ -2486,6 +2492,7 @@ paths:
         - BearerAuth: []
         - CookieAuth: []
         - ExternalApiKeyAuth: []
+        - StreamTokenAuth: []
     head:
       operationId: headFileLegacy
       description: Return file metadata using the legacy URL without a filename segment.
@@ -2495,6 +2502,7 @@ paths:
           required: true
           schema:
             $ref: "#/components/schemas/Uuid"
+        - $ref: "#/components/parameters/FileHeadRequestOptions"
       responses:
         "200":
           description: The request has succeeded.
@@ -2523,6 +2531,43 @@ paths:
               required: true
               schema:
                 type: string
+        "401":
+          description: Access is unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+      tags:
+        - Files
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+        - ExternalApiKeyAuth: []
+        - StreamTokenAuth: []
+  /v1/files/{fileId}/stream-token:
+    post:
+      operationId: createStreamToken
+      description: Issue a short-lived signed URL that media players such as VLC can
+        open directly.
+      parameters:
+        - name: fileId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Uuid"
+      responses:
+        "200":
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamToken"
         "401":
           description: Access is unauthorized.
           content:
@@ -2794,6 +2839,98 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelope"
       tags:
         - Files
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+        - ExternalApiKeyAuth: []
+  /v1/files/import/scan:
+    post:
+      operationId: scanChannelImport
+      description: List documents forwarded into a Teldrive channel that are not
+        indexed yet.
+      parameters: []
+      responses:
+        "200":
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportScanResponse"
+        "401":
+          description: Access is unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "422":
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+      tags:
+        - Files
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportScanRequest"
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+        - ExternalApiKeyAuth: []
+  /v1/files/import:
+    post:
+      operationId: createChannelImport
+      description: Index existing Telegram documents without uploading them again.
+      parameters: []
+      responses:
+        "202":
+          description: The request has been accepted for processing, but processing has
+            not yet completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportJob"
+        "401":
+          description: Access is unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: The request conflicts with the current state of the server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "422":
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+      tags:
+        - Files
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportRequest"
       security:
         - BearerAuth: []
         - CookieAuth: []
@@ -3894,6 +4031,7 @@ paths:
         - $ref: "#/components/parameters/FileContentRequestOptions.range"
         - $ref: "#/components/parameters/FileContentRequestOptions.ifNoneMatch"
         - $ref: "#/components/parameters/FileContentRequestOptions.download"
+        - $ref: "#/components/parameters/FileContentRequestOptions.stream_token"
         - name: token
           in: path
           required: true
@@ -4112,6 +4250,7 @@ paths:
         - $ref: "#/components/parameters/FileContentRequestOptions.range"
         - $ref: "#/components/parameters/FileContentRequestOptions.ifNoneMatch"
         - $ref: "#/components/parameters/FileContentRequestOptions.download"
+        - $ref: "#/components/parameters/FileContentRequestOptions.stream_token"
         - name: token
           in: path
           required: true
@@ -4320,6 +4459,7 @@ paths:
         - $ref: "#/components/parameters/FileContentRequestOptions.range"
         - $ref: "#/components/parameters/FileContentRequestOptions.ifNoneMatch"
         - $ref: "#/components/parameters/FileContentRequestOptions.download"
+        - $ref: "#/components/parameters/FileContentRequestOptions.stream_token"
         - name: token
           in: path
           required: true
@@ -4528,6 +4668,7 @@ paths:
         - $ref: "#/components/parameters/FileContentRequestOptions.range"
         - $ref: "#/components/parameters/FileContentRequestOptions.ifNoneMatch"
         - $ref: "#/components/parameters/FileContentRequestOptions.download"
+        - $ref: "#/components/parameters/FileContentRequestOptions.stream_token"
         - name: token
           in: path
           required: true
@@ -5833,6 +5974,91 @@ paths:
         - BearerAuth: []
         - CookieAuth: []
         - ExternalApiKeyAuth: []
+  /v1/settings/webdav:
+    get:
+      operationId: getWebDAVCredentials
+      description: Return the dedicated WebDAV login status for the authenticated user.
+      parameters: []
+      responses:
+        "200":
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebDAVCredentials"
+        "401":
+          description: Access is unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+      tags:
+        - Settings
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+        - ExternalApiKeyAuth: []
+    put:
+      operationId: setWebDAVCredentials
+      description: Set the dedicated WebDAV username and password used by rclone/Cyberduck.
+      parameters: []
+      responses:
+        "200":
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebDAVCredentials"
+        "401":
+          description: Access is unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: The request conflicts with the current state of the server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "422":
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+      tags:
+        - Settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebDAVCredentialsUpdate"
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+        - ExternalApiKeyAuth: []
+    delete:
+      operationId: deleteWebDAVCredentials
+      description: Remove the WebDAV login; clients can no longer authenticate.
+      parameters: []
+      responses:
+        "204":
+          description: "There is no content to send for this request, but the headers may
+            be useful. "
+        "401":
+          description: Access is unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+      tags:
+        - Settings
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+        - ExternalApiKeyAuth: []
 components:
   parameters:
     IdempotencyHeader:
@@ -6007,6 +6233,24 @@ components:
         type: string
         enum:
           - "1"
+      explode: false
+    FileContentRequestOptions.stream_token:
+      name: stream_token
+      in: query
+      required: false
+      description: Signed stream token for media players that cannot send an
+        Authorization header.
+      schema:
+        type: string
+      explode: false
+    FileHeadRequestOptions:
+      name: stream_token
+      in: query
+      required: false
+      description: Signed stream token for media players that cannot send an
+        Authorization header.
+      schema:
+        type: string
       explode: false
     UploadPartHeaders.contentLength:
       name: Content-Length
@@ -6829,6 +7073,28 @@ components:
           allOf:
             - $ref: "#/components/schemas/NameConflictPolicy"
           default: fail
+    StreamToken:
+      type: object
+      required:
+        - path
+        - token
+        - expiresAt
+        - sessionId
+      properties:
+        path:
+          type: string
+          description: Absolute server path including the signed token query parameter.
+        token:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        sessionId:
+          type: string
+        accountId:
+          type: integer
+          format: int64
+          description: Telegram account that will serve the stream, when known.
     ViewerKind:
       type: string
       enum:
@@ -6965,6 +7231,137 @@ components:
         openUploads:
           type: integer
           format: int64
+    ImportScanItem:
+      type: object
+      required:
+        - messageId
+        - name
+        - size
+        - modTime
+        - imported
+        - link
+      properties:
+        messageId:
+          type: integer
+          format: int64
+        name:
+          type: string
+        size:
+          type: integer
+          format: int64
+        mimeType:
+          type: string
+        modTime:
+          type: string
+          format: date-time
+        imported:
+          type: boolean
+          description: True when this Telegram message is already part of the catalog.
+        link:
+          type: string
+          description: Copyable Telegram link pointing at the source message.
+    ImportScanResponse:
+      type: object
+      required:
+        - items
+        - exhausted
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportScanItem"
+        nextCursor:
+          type: string
+        exhausted:
+          type: boolean
+    ImportScanRequest:
+      type: object
+      required:
+        - channelId
+      properties:
+        channelId:
+          type: integer
+          format: int64
+          description: Teldrive Telegram channel that contains the forwarded files.
+        beforeId:
+          type: integer
+          format: int64
+          description: "Pagination cursor: only messages with a smaller ID are returned."
+        limit:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 100
+          default: 100
+    ImportJobStatus:
+      type: string
+      enum:
+        - pending
+        - running
+        - completed
+        - failed
+    ImportJob:
+      type: object
+      required:
+        - id
+        - channelId
+        - status
+        - total
+        - imported
+        - skipped
+        - failed
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        channelId:
+          type: integer
+          format: int64
+        parentId:
+          $ref: "#/components/schemas/Uuid"
+        status:
+          $ref: "#/components/schemas/ImportJobStatus"
+        total:
+          type: integer
+          format: int32
+        imported:
+          type: integer
+          format: int32
+        skipped:
+          type: integer
+          format: int32
+        failed:
+          type: integer
+          format: int32
+        error:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ImportRequest:
+      type: object
+      required:
+        - channelId
+        - messageIds
+      properties:
+        channelId:
+          type: integer
+          format: int64
+        parentId:
+          allOf:
+            - $ref: "#/components/schemas/Uuid"
+          description: Destination folder. Omit to import into the drive root.
+        messageIds:
+          type: array
+          items:
+            type: integer
+            format: int64
+          minItems: 1
+          maxItems: 500
     FolderCreateRequest:
       type: object
       required:
@@ -7931,6 +8328,36 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/StorageActivity"
+    WebDAVCredentials:
+      type: object
+      required:
+        - enabled
+        - configured
+      properties:
+        enabled:
+          type: boolean
+          description: True when the server has WebDAV enabled in configuration.
+        configured:
+          type: boolean
+        username:
+          type: string
+        url:
+          type: string
+          description: URL clients should use, for example https://host/dav.
+    WebDAVCredentialsUpdate:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 64
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
   securitySchemes:
     CookieAuth:
       type: apiKey
@@ -7947,6 +8374,12 @@ components:
       type: apiKey
       in: query
       name: ticket
+    StreamTokenAuth:
+      type: apiKey
+      in: query
+      name: stream_token
+      description: Short-lived signed URL credential used by media players that cannot
+        send headers.
 servers:
   - url: /api
     description: Current TelDrive server

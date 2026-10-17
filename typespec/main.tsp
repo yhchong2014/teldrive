@@ -12,6 +12,8 @@ import "./uploads.tsp";
 import "./shares.tsp";
 import "./jobs.tsp";
 import "./storage.tsp";
+import "./imports.tsp";
+import "./webdav.tsp";
 
 using TypeSpec.Http;
 using TypeSpec.OpenAPI;

@@ -1,4 +1,4 @@
-import { Button } from "@heroui/react";
+import { Button, Dropdown, Label } from "@heroui/react";
 import DownloadIcon from "~icons/gravity-ui/arrow-down-to-line";
 import CopyIcon from "~icons/gravity-ui/copy";
 import CopyLinkIcon from "~icons/gravity-ui/copy-arrow-right";
@@ -9,8 +9,11 @@ import CutIcon from "~icons/gravity-ui/scissors";
 import TrashIcon from "~icons/gravity-ui/trash-bin";
 import CloseIcon from "~icons/gravity-ui/xmark";
 import BookmarkIcon from "~icons/gravity-ui/bookmark";
+import PlayIcon from "~icons/gravity-ui/play";
 import { useAppLocale } from "@/lib/locale";
 import type { FileEntry } from "../../api/types";
+
+export type PlayerAction = "vlc" | "potplayer" | "copy";
 
 export function FileSelectionToolbar({
   selectedFiles,
@@ -23,6 +26,7 @@ export function FileSelectionToolbar({
   onShare,
   onDownload,
   onCopyDownloadLinks,
+  onOpenPlayer,
   onMove,
   onTrash,
   onClear,
@@ -37,6 +41,7 @@ export function FileSelectionToolbar({
   onShare?: () => void;
   onDownload?: () => void;
   onCopyDownloadLinks?: () => void;
+  onOpenPlayer?: (action: PlayerAction) => void;
   onMove?: () => void;
   onTrash?: () => void;
   onClear?: () => void;
@@ -127,6 +132,35 @@ export function FileSelectionToolbar({
           >
             <DownloadIcon className="size-4" />
           </Button>
+        ) : null}
+        {singleSelectedFile?.kind === "file" && onOpenPlayer ? (
+          <Dropdown>
+            <Button
+              isIconOnly
+              size="sm"
+              variant="ghost"
+              aria-label={t("selection.openPlayer")}
+              isDisabled={pending}
+            >
+              <PlayIcon className="size-4" />
+            </Button>
+            <Dropdown.Popover>
+              <Dropdown.Menu
+                aria-label={t("selection.openPlayer")}
+                onAction={(key) => onOpenPlayer(key as PlayerAction)}
+              >
+                <Dropdown.Item id="vlc" textValue="VLC">
+                  <Label>VLC</Label>
+                </Dropdown.Item>
+                <Dropdown.Item id="potplayer" textValue="PotPlayer">
+                  <Label>PotPlayer</Label>
+                </Dropdown.Item>
+                <Dropdown.Item id="copy" textValue={t("selection.copyStreamLink")}>
+                  <Label>{t("selection.copyStreamLink")}</Label>
+                </Dropdown.Item>
+              </Dropdown.Menu>
+            </Dropdown.Popover>
+          </Dropdown>
         ) : null}
         {selectedOnlyFiles && onCopyDownloadLinks ? (
           <Button

@@ -40,6 +40,9 @@ type StoredPart struct {
 
 type DocumentMessage struct {
 	ID        int64
+	Name      string
+	Size      int64
+	MimeType  string
 	CreatedAt time.Time
 }
 
@@ -60,6 +63,20 @@ type DocumentMessagePage struct {
 // production storage without expanding the core upload/download boundary.
 type DocumentMessageLister interface {
 	ListDocumentMessages(context.Context, ListDocumentMessagesRequest) (DocumentMessagePage, error)
+}
+
+type GetDocumentMessagesRequest struct {
+	UserID     int64
+	ChannelID  int64
+	MessageIDs []int64
+}
+
+// DocumentMessageReader resolves metadata for specific channel messages. It is
+// used by the channel import feature to index files that were forwarded into a
+// Teldrive channel without re-uploading them.
+type DocumentMessageReader interface {
+	DocumentMessageLister
+	GetDocumentMessages(context.Context, GetDocumentMessagesRequest) ([]DocumentMessage, error)
 }
 
 type MetadataRequest struct {

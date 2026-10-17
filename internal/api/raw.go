@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -35,6 +36,9 @@ func (h *RawHandler) DownloadFile(ctx context.Context, params gen.DownloadFilePa
 		return mapServiceError(ErrOperationUnavailable)
 	}
 	fileID := googleUUID(params.FileId)
+	if !streamClaimsMatch(ctx, fileID) {
+		return mapServiceError(ErrUnauthenticated)
+	}
 	access, err := h.handler.resolveAuthenticatedFileAccess(ctx, fileID, false)
 	if err != nil {
 		return mapServiceError(err)
@@ -134,13 +138,17 @@ func (h *RawHandler) streamFile(ctx context.Context, w http.ResponseWriter, user
 		return nil
 	}
 
+	openStarted := time.Now()
 	download, err := h.handler.Downloader.Open(ctx, transfer.DownloadRequest{
 		UserID: userID, FileID: fileID, Offset: rangeSpec.Offset, Length: rangeSpec.Length,
+		PreferredAccountID: streamPreferredAccount(ctx),
 	})
 	if err != nil {
 		return mapServiceError(err)
 	}
 	defer download.Reader.Close()
+	slog.DebugContext(ctx, "api.stream_opened", "file_id", fileID, "offset", rangeSpec.Offset,
+		"length", rangeSpec.Length, "open_ms", time.Since(openStarted).Milliseconds())
 
 	status := http.StatusOK
 	if partial {
@@ -155,7 +163,8 @@ func (h *RawHandler) streamFile(ctx context.Context, w http.ResponseWriter, user
 	w.Header().Set("Last-Modified", file.ModTime.Time.UTC().Format(http.TimeFormat))
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(status)
-	_, err = io.CopyN(w, download.Reader, rangeSpec.Length)
+	writer := &firstByteWriter{ResponseWriter: w, started: openStarted, fileID: fileID}
+	_, err = io.CopyN(writer, download.Reader, rangeSpec.Length)
 	if err != nil && !isExpectedStreamEnd(ctx, err) {
 		// Headers are already committed, so a JSON error response cannot replace
 		// this stream. The Content-Length mismatch tells the client it was truncated.
@@ -179,4 +188,27 @@ func ifNoneMatch(value gen.OptETag) string {
 		return strings.TrimSpace(string(value))
 	}
 	return ""
+}
+
+// firstByteWriter records how long a media player waits for the first body byte,
+// which is the number that matters for VLC-style startup delay.
+type firstByteWriter struct {
+	http.ResponseWriter
+	started time.Time
+	fileID  uuid.UUID
+	wrote   bool
+}
+
+func (w *firstByteWriter) Write(p []byte) (int, error) {
+	if !w.wrote && len(p) > 0 {
+		w.wrote = true
+		slog.Info("api.stream_first_byte", "file_id", w.fileID, "ttfb_ms", time.Since(w.started).Milliseconds())
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *firstByteWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }

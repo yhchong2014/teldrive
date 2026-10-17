@@ -21,6 +21,9 @@ type SecurityHandler interface {
 	HandleEventTicketAuth(ctx context.Context, operationName OperationName, t EventTicketAuth) (context.Context, error)
 	// HandleExternalApiKeyAuth handles ExternalApiKeyAuth security.
 	HandleExternalApiKeyAuth(ctx context.Context, operationName OperationName, t ExternalApiKeyAuth) (context.Context, error)
+	// HandleStreamTokenAuth handles StreamTokenAuth security.
+	// Short-lived signed URL credential used by media players that cannot send headers.
+	HandleStreamTokenAuth(ctx context.Context, operationName OperationName, t StreamTokenAuth) (context.Context, error)
 }
 
 func findAuthorization(h http.Header, prefix string) (string, bool) {
@@ -51,12 +54,14 @@ var operationRolesBearerAuth = map[string][]string{
 	CreateApiKeyOperation:              []string{},
 	CreateBotsOperation:                []string{},
 	CreateChannelOperation:             []string{},
+	CreateChannelImportOperation:       []string{},
 	CreateEventStreamTicketOperation:   []string{},
 	CreateFileAccessGrantOperation:     []string{},
 	CreateFolderOperation:              []string{},
 	CreateJobOperation:                 []string{},
 	CreatePeriodicJobOperation:         []string{},
 	CreateShareOperation:               []string{},
+	CreateStreamTokenOperation:         []string{},
 	CreateUploadOperation:              []string{},
 	CreateUploadImportOperation:        []string{},
 	DeleteBotOperation:                 []string{},
@@ -64,6 +69,7 @@ var operationRolesBearerAuth = map[string][]string{
 	DeleteFileViewStateOperation:       []string{},
 	DeleteJobOperation:                 []string{},
 	DeletePeriodicJobOperation:         []string{},
+	DeleteWebDAVCredentialsOperation:   []string{},
 	DiscoverChannelsOperation:          []string{},
 	DownloadFileOperation:              []string{},
 	DownloadFileLegacyOperation:        []string{},
@@ -80,6 +86,7 @@ var operationRolesBearerAuth = map[string][]string{
 	GetUploadOperation:                 []string{},
 	GetUploadStatisticsOperation:       []string{},
 	GetUserPreferencesOperation:        []string{},
+	GetWebDAVCredentialsOperation:      []string{},
 	HeadFileOperation:                  []string{},
 	HeadFileLegacyOperation:            []string{},
 	ListAdminUsersOperation:            []string{},
@@ -118,8 +125,10 @@ var operationRolesBearerAuth = map[string][]string{
 	RevokeFileAccessGrantOperation:     []string{},
 	RevokeSessionOperation:             []string{},
 	RevokeShareOperation:               []string{},
+	ScanChannelImportOperation:         []string{},
 	SearchUsersOperation:               []string{},
 	SelectChannelOperation:             []string{},
+	SetWebDAVCredentialsOperation:      []string{},
 	StreamEventsOperation:              []string{},
 	SyncChannelsOperation:              []string{},
 	TrashFileOperation:                 []string{},
@@ -165,12 +174,14 @@ var operationRolesCookieAuth = map[string][]string{
 	CreateApiKeyOperation:              []string{},
 	CreateBotsOperation:                []string{},
 	CreateChannelOperation:             []string{},
+	CreateChannelImportOperation:       []string{},
 	CreateEventStreamTicketOperation:   []string{},
 	CreateFileAccessGrantOperation:     []string{},
 	CreateFolderOperation:              []string{},
 	CreateJobOperation:                 []string{},
 	CreatePeriodicJobOperation:         []string{},
 	CreateShareOperation:               []string{},
+	CreateStreamTokenOperation:         []string{},
 	CreateUploadOperation:              []string{},
 	CreateUploadImportOperation:        []string{},
 	DeleteBotOperation:                 []string{},
@@ -178,6 +189,7 @@ var operationRolesCookieAuth = map[string][]string{
 	DeleteFileViewStateOperation:       []string{},
 	DeleteJobOperation:                 []string{},
 	DeletePeriodicJobOperation:         []string{},
+	DeleteWebDAVCredentialsOperation:   []string{},
 	DiscoverChannelsOperation:          []string{},
 	DownloadFileOperation:              []string{},
 	DownloadFileLegacyOperation:        []string{},
@@ -194,6 +206,7 @@ var operationRolesCookieAuth = map[string][]string{
 	GetUploadOperation:                 []string{},
 	GetUploadStatisticsOperation:       []string{},
 	GetUserPreferencesOperation:        []string{},
+	GetWebDAVCredentialsOperation:      []string{},
 	HeadFileOperation:                  []string{},
 	HeadFileLegacyOperation:            []string{},
 	ListAdminUsersOperation:            []string{},
@@ -233,8 +246,10 @@ var operationRolesCookieAuth = map[string][]string{
 	RevokeFileAccessGrantOperation:     []string{},
 	RevokeSessionOperation:             []string{},
 	RevokeShareOperation:               []string{},
+	ScanChannelImportOperation:         []string{},
 	SearchUsersOperation:               []string{},
 	SelectChannelOperation:             []string{},
+	SetWebDAVCredentialsOperation:      []string{},
 	SyncChannelsOperation:              []string{},
 	TrashFileOperation:                 []string{},
 	UpdateAdminUserOperation:           []string{},
@@ -303,18 +318,21 @@ var operationRolesExternalApiKeyAuth = map[string][]string{
 	CompleteUploadOperation:            []string{},
 	CopyFileOperation:                  []string{},
 	CreateChannelOperation:             []string{},
+	CreateChannelImportOperation:       []string{},
 	CreateEventStreamTicketOperation:   []string{},
 	CreateFileAccessGrantOperation:     []string{},
 	CreateFolderOperation:              []string{},
 	CreateJobOperation:                 []string{},
 	CreatePeriodicJobOperation:         []string{},
 	CreateShareOperation:               []string{},
+	CreateStreamTokenOperation:         []string{},
 	CreateUploadOperation:              []string{},
 	CreateUploadImportOperation:        []string{},
 	DeleteChannelOperation:             []string{},
 	DeleteFileViewStateOperation:       []string{},
 	DeleteJobOperation:                 []string{},
 	DeletePeriodicJobOperation:         []string{},
+	DeleteWebDAVCredentialsOperation:   []string{},
 	DiscoverChannelsOperation:          []string{},
 	DownloadFileOperation:              []string{},
 	DownloadFileLegacyOperation:        []string{},
@@ -331,6 +349,7 @@ var operationRolesExternalApiKeyAuth = map[string][]string{
 	GetUploadOperation:                 []string{},
 	GetUploadStatisticsOperation:       []string{},
 	GetUserPreferencesOperation:        []string{},
+	GetWebDAVCredentialsOperation:      []string{},
 	HeadFileOperation:                  []string{},
 	HeadFileLegacyOperation:            []string{},
 	ListAdminUsersOperation:            []string{},
@@ -362,8 +381,10 @@ var operationRolesExternalApiKeyAuth = map[string][]string{
 	RevokeAdminUserAccessOperation:     []string{},
 	RevokeFileAccessGrantOperation:     []string{},
 	RevokeShareOperation:               []string{},
+	ScanChannelImportOperation:         []string{},
 	SearchUsersOperation:               []string{},
 	SelectChannelOperation:             []string{},
+	SetWebDAVCredentialsOperation:      []string{},
 	StreamEventsOperation:              []string{},
 	SyncChannelsOperation:              []string{},
 	TrashFileOperation:                 []string{},
@@ -387,6 +408,35 @@ var operationRolesExternalApiKeyAuth = map[string][]string{
 // Returns nil if the operation has no role requirements or if the operation is unknown.
 func GetRolesForExternalApiKeyAuth(operation string) []string {
 	roles, ok := operationRolesExternalApiKeyAuth[operation]
+	if !ok {
+		return nil
+	}
+	// Return a copy to prevent external modification
+	result := make([]string, len(roles))
+	copy(result, roles)
+	return result
+}
+
+// operationRolesStreamTokenAuth is a private map storing roles per operation.
+var operationRolesStreamTokenAuth = map[string][]string{
+	DownloadFileOperation:       []string{},
+	DownloadFileLegacyOperation: []string{},
+	HeadFileOperation:           []string{},
+	HeadFileLegacyOperation:     []string{},
+}
+
+// GetRolesForStreamTokenAuth returns the required roles for the given operation.
+//
+// This is useful for authorization scenarios where you need to know which roles
+// are required for an operation.
+//
+// Example:
+//
+//	requiredRoles := GetRolesForStreamTokenAuth(AddPetOperation)
+//
+// Returns nil if the operation has no role requirements or if the operation is unknown.
+func GetRolesForStreamTokenAuth(operation string) []string {
+	roles, ok := operationRolesStreamTokenAuth[operation]
 	if !ok {
 		return nil
 	}
@@ -473,6 +523,25 @@ func (s *Server) securityExternalApiKeyAuth(ctx context.Context, operationName O
 	return rctx, true, err
 }
 
+func (s *Server) securityStreamTokenAuth(ctx context.Context, operationName OperationName, req *http.Request) (context.Context, bool, error) {
+	var t StreamTokenAuth
+	const parameterName = "stream_token"
+	q := req.URL.Query()
+	if !q.Has(parameterName) {
+		return ctx, false, nil
+	}
+	value := q.Get(parameterName)
+	t.APIKey = value
+	t.Roles = operationRolesStreamTokenAuth[operationName]
+	rctx, err := s.sec.HandleStreamTokenAuth(ctx, operationName, t)
+	if errors.Is(err, ogenerrors.ErrSkipServerSecurity) {
+		return nil, false, nil
+	} else if err != nil {
+		return nil, false, err
+	}
+	return rctx, true, err
+}
+
 // SecuritySource is provider of security values (tokens, passwords, etc.).
 type SecuritySource interface {
 	// BearerAuth provides BearerAuth security value.
@@ -483,6 +552,9 @@ type SecuritySource interface {
 	EventTicketAuth(ctx context.Context, operationName OperationName) (EventTicketAuth, error)
 	// ExternalApiKeyAuth provides ExternalApiKeyAuth security value.
 	ExternalApiKeyAuth(ctx context.Context, operationName OperationName) (ExternalApiKeyAuth, error)
+	// StreamTokenAuth provides StreamTokenAuth security value.
+	// Short-lived signed URL credential used by media players that cannot send headers.
+	StreamTokenAuth(ctx context.Context, operationName OperationName) (StreamTokenAuth, error)
 }
 
 func (s *Client) securityBearerAuth(ctx context.Context, operationName OperationName, req *http.Request) error {
@@ -520,5 +592,15 @@ func (s *Client) securityExternalApiKeyAuth(ctx context.Context, operationName O
 		return errors.Wrap(err, "security source \"ExternalApiKeyAuth\"")
 	}
 	req.Header.Set("X-Api-Key", t.APIKey)
+	return nil
+}
+func (s *Client) securityStreamTokenAuth(ctx context.Context, operationName OperationName, req *http.Request) error {
+	t, err := s.sec.StreamTokenAuth(ctx, operationName)
+	if err != nil {
+		return errors.Wrap(err, "security source \"StreamTokenAuth\"")
+	}
+	q := req.URL.Query()
+	q.Set("stream_token", t.APIKey)
+	req.URL.RawQuery = q.Encode()
 	return nil
 }

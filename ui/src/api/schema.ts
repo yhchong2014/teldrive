@@ -781,6 +781,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/files/{fileId}/stream-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Issue a short-lived signed URL that media players such as VLC can open directly. */
+        post: operations["createStreamToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/files/{fileId}/view-state": {
         parameters: {
             query?: never;
@@ -862,6 +879,40 @@ export interface paths {
         get: operations["getDriveStatistics"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/files/import/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description List documents forwarded into a Teldrive channel that are not indexed yet. */
+        post: operations["scanChannelImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/files/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Index existing Telegram documents without uploading them again. */
+        post: operations["createChannelImport"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1557,6 +1608,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/settings/webdav": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Return the dedicated WebDAV login status for the authenticated user. */
+        get: operations["getWebDAVCredentials"];
+        /** @description Set the dedicated WebDAV username and password used by rclone/Cyberduck. */
+        put: operations["setWebDAVCredentials"];
+        post?: never;
+        /** @description Remove the WebDAV login; clients can no longer authenticate. */
+        delete: operations["deleteWebDAVCredentials"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1900,6 +1970,19 @@ export interface components {
             /** @default fail */
             conflictPolicy: components["schemas"]["NameConflictPolicy"];
         };
+        StreamToken: {
+            /** @description Absolute server path including the signed token query parameter. */
+            path: string;
+            token: string;
+            /** Format: date-time */
+            expiresAt: string;
+            sessionId: string;
+            /**
+             * Format: int64
+             * @description Telegram account that will serve the stream, when known.
+             */
+            accountId?: number;
+        };
         /** @enum {string} */
         ViewerKind: "image" | "video" | "audio" | "pdf" | "ebook" | "text";
         FileViewState: {
@@ -1961,6 +2044,71 @@ export interface components {
             activeShares: number;
             /** Format: int64 */
             openUploads: number;
+        };
+        ImportScanItem: {
+            /** Format: int64 */
+            messageId: number;
+            name: string;
+            /** Format: int64 */
+            size: number;
+            mimeType?: string;
+            /** Format: date-time */
+            modTime: string;
+            /** @description True when this Telegram message is already part of the catalog. */
+            imported: boolean;
+            /** @description Copyable Telegram link pointing at the source message. */
+            link: string;
+        };
+        ImportScanResponse: {
+            items: components["schemas"]["ImportScanItem"][];
+            nextCursor?: string;
+            exhausted: boolean;
+        };
+        ImportScanRequest: {
+            /**
+             * Format: int64
+             * @description Teldrive Telegram channel that contains the forwarded files.
+             */
+            channelId: number;
+            /**
+             * Format: int64
+             * @description Pagination cursor: only messages with a smaller ID are returned.
+             */
+            beforeId?: number;
+            /**
+             * Format: int32
+             * @default 100
+             */
+            limit: number;
+        };
+        /** @enum {string} */
+        ImportJobStatus: "pending" | "running" | "completed" | "failed";
+        ImportJob: {
+            id: components["schemas"]["Uuid"];
+            /** Format: int64 */
+            channelId: number;
+            parentId?: components["schemas"]["Uuid"];
+            status: components["schemas"]["ImportJobStatus"];
+            /** Format: int32 */
+            total: number;
+            /** Format: int32 */
+            imported: number;
+            /** Format: int32 */
+            skipped: number;
+            /** Format: int32 */
+            failed: number;
+            error?: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        ImportRequest: {
+            /** Format: int64 */
+            channelId: number;
+            /** @description Destination folder. Omit to import into the drive root. */
+            parentId?: components["schemas"]["Uuid"];
+            messageIds: number[];
         };
         FolderCreateRequest: {
             parentId?: components["schemas"]["Uuid"];
@@ -2409,6 +2557,18 @@ export interface components {
             cleanup: components["schemas"]["StorageCleanupStatistics"];
             activity: components["schemas"]["StorageActivity"][];
         };
+        WebDAVCredentials: {
+            /** @description True when the server has WebDAV enabled in configuration. */
+            enabled: boolean;
+            configured: boolean;
+            username?: string;
+            /** @description URL clients should use, for example https://host/dav. */
+            url?: string;
+        };
+        WebDAVCredentialsUpdate: {
+            username: string;
+            password: string;
+        };
     };
     responses: never;
     parameters: {
@@ -2438,6 +2598,10 @@ export interface components {
         "FileContentRequestOptions.ifNoneMatch": components["schemas"]["ETag"];
         /** @description Force a browser download instead of inline display. */
         "FileContentRequestOptions.download": "1";
+        /** @description Signed stream token for media players that cannot send an Authorization header. */
+        "FileContentRequestOptions.stream_token": string;
+        /** @description Signed stream token for media players that cannot send an Authorization header. */
+        FileHeadRequestOptions: string;
         "UploadPartHeaders.contentLength": number;
         /** @description BLAKE3 checksum of the plaintext part. */
         "UploadPartHeaders.checksum": components["schemas"]["Checksum"];
@@ -5014,6 +5178,8 @@ export interface operations {
             query?: {
                 /** @description Force a browser download instead of inline display. */
                 download?: components["parameters"]["FileContentRequestOptions.download"];
+                /** @description Signed stream token for media players that cannot send an Authorization header. */
+                stream_token?: components["parameters"]["FileContentRequestOptions.stream_token"];
             };
             header?: {
                 Range?: components["parameters"]["FileContentRequestOptions.range"];
@@ -5112,7 +5278,10 @@ export interface operations {
     };
     headFile: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Signed stream token for media players that cannot send an Authorization header. */
+                stream_token?: components["parameters"]["FileHeadRequestOptions"];
+            };
             header?: never;
             path: {
                 fileId: components["schemas"]["Uuid"];
@@ -5159,6 +5328,8 @@ export interface operations {
             query?: {
                 /** @description Force a browser download instead of inline display. */
                 download?: components["parameters"]["FileContentRequestOptions.download"];
+                /** @description Signed stream token for media players that cannot send an Authorization header. */
+                stream_token?: components["parameters"]["FileContentRequestOptions.stream_token"];
             };
             header?: {
                 Range?: components["parameters"]["FileContentRequestOptions.range"];
@@ -5256,7 +5427,10 @@ export interface operations {
     };
     headFileLegacy: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Signed stream token for media players that cannot send an Authorization header. */
+                stream_token?: components["parameters"]["FileHeadRequestOptions"];
+            };
             header?: never;
             path: {
                 fileId: components["schemas"]["Uuid"];
@@ -5276,6 +5450,46 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Access is unauthorized. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server cannot find the requested resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createStreamToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fileId: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The request has succeeded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamToken"];
+                };
             };
             /** @description Access is unauthorized. */
             401: {
@@ -5601,6 +5815,117 @@ export interface operations {
             };
             /** @description Access is unauthorized. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    scanChannelImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportScanRequest"];
+            };
+        };
+        responses: {
+            /** @description The request has succeeded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportScanResponse"];
+                };
+            };
+            /** @description Access is unauthorized. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server cannot find the requested resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Client error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createChannelImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportRequest"];
+            };
+        };
+        responses: {
+            /** @description The request has been accepted for processing, but processing has not yet completed. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportJob"];
+                };
+            };
+            /** @description Access is unauthorized. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The server cannot find the requested resource. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request conflicts with the current state of the server. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Client error */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6859,6 +7184,8 @@ export interface operations {
             query?: {
                 /** @description Force a browser download instead of inline display. */
                 download?: components["parameters"]["FileContentRequestOptions.download"];
+                /** @description Signed stream token for media players that cannot send an Authorization header. */
+                stream_token?: components["parameters"]["FileContentRequestOptions.stream_token"];
             };
             header?: {
                 "X-Share-Password"?: components["parameters"]["SharePasswordHeader"];
@@ -7045,6 +7372,8 @@ export interface operations {
             query?: {
                 /** @description Force a browser download instead of inline display. */
                 download?: components["parameters"]["FileContentRequestOptions.download"];
+                /** @description Signed stream token for media players that cannot send an Authorization header. */
+                stream_token?: components["parameters"]["FileContentRequestOptions.stream_token"];
             };
             header?: {
                 "X-Share-Password"?: components["parameters"]["SharePasswordHeader"];
@@ -7229,6 +7558,8 @@ export interface operations {
             query?: {
                 /** @description Force a browser download instead of inline display. */
                 download?: components["parameters"]["FileContentRequestOptions.download"];
+                /** @description Signed stream token for media players that cannot send an Authorization header. */
+                stream_token?: components["parameters"]["FileContentRequestOptions.stream_token"];
             };
             header?: {
                 "X-Share-Password"?: components["parameters"]["SharePasswordHeader"];
@@ -7413,6 +7744,8 @@ export interface operations {
             query?: {
                 /** @description Force a browser download instead of inline display. */
                 download?: components["parameters"]["FileContentRequestOptions.download"];
+                /** @description Signed stream token for media players that cannot send an Authorization header. */
+                stream_token?: components["parameters"]["FileContentRequestOptions.stream_token"];
             };
             header?: {
                 "X-Share-Password"?: components["parameters"]["SharePasswordHeader"];
@@ -8937,6 +9270,113 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["StorageDashboard"];
                 };
+            };
+            /** @description Access is unauthorized. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getWebDAVCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The request has succeeded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebDAVCredentials"];
+                };
+            };
+            /** @description Access is unauthorized. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    setWebDAVCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebDAVCredentialsUpdate"];
+            };
+        };
+        responses: {
+            /** @description The request has succeeded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebDAVCredentials"];
+                };
+            };
+            /** @description Access is unauthorized. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description The request conflicts with the current state of the server. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Client error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    deleteWebDAVCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description There is no content to send for this request, but the headers may be useful. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Access is unauthorized. */
             401: {

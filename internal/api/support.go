@@ -27,6 +27,7 @@ import (
 	"github.com/tgdrive/teldrive/v2/internal/dbtypes"
 	"github.com/tgdrive/teldrive/v2/internal/events"
 	"github.com/tgdrive/teldrive/v2/internal/fileops"
+	"github.com/tgdrive/teldrive/v2/internal/importer"
 	"github.com/tgdrive/teldrive/v2/internal/shares"
 	"github.com/tgdrive/teldrive/v2/internal/transfer"
 	"github.com/tgdrive/teldrive/v2/internal/uploads"
@@ -75,7 +76,7 @@ func mapServiceError(err error) error {
 		return problem(http.StatusTooManyRequests, "too_many_event_streams", "too many event streams are open", err)
 	case errors.Is(err, events.ErrServiceClosed), errors.Is(err, ErrOperationUnavailable), errors.Is(err, transfer.ErrUploadNotConfigured), errors.Is(err, transfer.ErrDownloadNotConfigured):
 		return problem(http.StatusServiceUnavailable, "service_unavailable", "operation is not available", err)
-	case errors.Is(err, catalog.ErrNotFound), errors.Is(err, uploads.ErrNotFound), errors.Is(err, authn.ErrSessionNotFound), errors.Is(err, authn.ErrAPIKeyNotFound), errors.Is(err, bots.ErrNotFound), errors.Is(err, channels.ErrInvalidChannel), errors.Is(err, shares.ErrNotFound), errors.Is(err, fileops.ErrNotFound):
+	case errors.Is(err, catalog.ErrNotFound), errors.Is(err, uploads.ErrNotFound), errors.Is(err, importer.ErrChannel), errors.Is(err, importer.ErrNotFound), errors.Is(err, authn.ErrSessionNotFound), errors.Is(err, authn.ErrAPIKeyNotFound), errors.Is(err, bots.ErrNotFound), errors.Is(err, channels.ErrInvalidChannel), errors.Is(err, shares.ErrNotFound), errors.Is(err, fileops.ErrNotFound):
 		return problem(http.StatusNotFound, "not_found", "resource was not found", err)
 	case errors.Is(err, uploads.ErrExpired), errors.Is(err, authn.ErrFlowNotFound), errors.Is(err, shares.ErrExpired):
 		return problem(http.StatusGone, "upload_expired", "upload session has expired", err)
@@ -87,7 +88,7 @@ func mapServiceError(err error) error {
 		return problem(http.StatusRequestedRangeNotSatisfiable, "range_not_satisfiable", "requested byte range is not satisfiable", err)
 	case errors.Is(err, uploads.ErrHashMismatch), errors.Is(err, transfer.ErrChecksumMismatch):
 		return problem(http.StatusUnprocessableEntity, "hash_mismatch", "content hash does not match", err)
-	case errors.Is(err, catalog.ErrInvalidName), errors.Is(err, catalog.ErrInvalidParent), errors.Is(err, catalog.ErrInvalidOwner), errors.Is(err, uploads.ErrInvalidInput), errors.Is(err, uploads.ErrInvalidParent), errors.Is(err, uploads.ErrInvalidChannel), errors.Is(err, uploads.ErrUnsupportedConflictPolicy), errors.Is(err, transfer.ErrInvalidUpload), errors.Is(err, transfer.ErrInvalidDownload), errors.Is(err, authn.ErrInvalidInput), errors.Is(err, authn.ErrCodeInvalid), errors.Is(err, bots.ErrInvalidInput), errors.Is(err, bots.ErrNotBot), errors.Is(err, shares.ErrInvalidInput), errors.Is(err, fileops.ErrInvalidInput):
+	case errors.Is(err, catalog.ErrInvalidName), errors.Is(err, catalog.ErrInvalidParent), errors.Is(err, importer.ErrInvalidInput), errors.Is(err, catalog.ErrInvalidOwner), errors.Is(err, uploads.ErrInvalidInput), errors.Is(err, uploads.ErrInvalidParent), errors.Is(err, uploads.ErrInvalidChannel), errors.Is(err, uploads.ErrUnsupportedConflictPolicy), errors.Is(err, transfer.ErrInvalidUpload), errors.Is(err, transfer.ErrInvalidDownload), errors.Is(err, authn.ErrInvalidInput), errors.Is(err, authn.ErrCodeInvalid), errors.Is(err, bots.ErrInvalidInput), errors.Is(err, bots.ErrNotBot), errors.Is(err, shares.ErrInvalidInput), errors.Is(err, fileops.ErrInvalidInput):
 		return problem(http.StatusUnprocessableEntity, "invalid_request", "request is invalid", err)
 	default:
 		return problem(http.StatusInternalServerError, "internal_error", "request failed", err)

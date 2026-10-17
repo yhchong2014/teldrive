@@ -41,10 +41,17 @@ rate-burst = 10
 proxy = ""
 upload-threads = 8
 download-bots = 0
-# Keep this disabled to preserve request-scoped Telegram clients.
-download-client-pool = false
+# Recommended for media playback: keep authenticated download clients warm so
+# VLC starts quickly on the first request and after idle periods.
+download-client-pool = true
+# How long an idle warm download client stays open.
+download-client-idle-timeout = "30m"
+# Connect a download client when a stream token is issued.
+download-warmup = true
 download-read-buffers = 32
 download-read-parallel = 4
+# Telegram accounts (bots) that may serve one stream; 0 uses every eligible bot.
+download-bots-per-stream = 0
 randomize-part-names = true
 auto-channel-create = true
 bot-rotation-backend = "memory"
@@ -69,12 +76,21 @@ allowed-users = []
 access-token-ttl = "15m"
 refresh-token-ttl = "720h"
 login-flow-ttl = "10m"
+# Lifetime of signed media-player URLs (VLC/PotPlayer).
+stream-token-ttl = "24h"
 
 [uploads]
 session-ttl = "168h"
 # Disable to skip automatic BLAKE3 hashing during uploads. Client-supplied checksums still require verification.
 hashing-enabled = true
 local-import-roots = []
+
+[webdav]
+# Serve WebDAV (rclone, Cyberduck, RaiDrive) on the same HTTP listener.
+enabled = false
+prefix = "/dav"
+realm = "teldrive"
+session-timeout = "30m"
 
 [cache.memory]
 size = "5MB"
