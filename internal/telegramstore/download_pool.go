@@ -34,6 +34,20 @@ type AccountLeaser interface {
 	LeaseAccount(ctx context.Context, userID int64, operation Operation, connections int) (AccountLease, error)
 }
 
+// MultiAccountLeaser selects and reserves several accounts in one operation.
+// Implementations can batch account lookups and allocate the total connection
+// budget across the selected accounts instead of charging every account for
+// the full stream parallelism.
+type MultiAccountLeaser interface {
+	LeaseAccounts(ctx context.Context, userID int64, operation Operation, accountLimit, totalConnections int, preferredAccountID int64) ([]AccountLease, error)
+}
+
+// DownloadAccountLister reports the accounts that can be used to size a warm
+// client's pool before a stream is opened.
+type DownloadAccountLister interface {
+	DownloadAccounts(ctx context.Context, userID int64) ([]int64, error)
+}
+
 // PreferredAccountLeaser optionally pins a download to a previously chosen
 // account so repeated HTTP requests for the same media file keep using the warm
 // client that served the first one.
@@ -129,42 +143,50 @@ func (p *DownloadClientPool) OpenDownloadSessionMulti(ctx context.Context, userI
 		accounts = 1
 	}
 	for {
-		session, err := p.openDownloadSessionMulti(ctx, userID, accounts, preferredAccountID)
+		session, err := p.openDownloadSessionMulti(ctx, userID, accounts, preferredAccountID, p.config.ReadParallel)
 		if !errors.Is(err, ErrAccountRevoked) {
 			return session, err
 		}
 	}
 }
 
-func (p *DownloadClientPool) openDownloadSessionMulti(ctx context.Context, userID int64, accounts int, preferredAccountID int64) (DownloadSession, error) {
+func (p *DownloadClientPool) openDownloadSessionMulti(ctx context.Context, userID int64, accounts int, preferredAccountID int64, totalConnections int) (DownloadSession, error) {
 	leases := make([]AccountLease, 0, accounts)
-	seen := make(map[int64]struct{}, accounts)
-	releaseLeases := func() {
-		for _, lease := range leases {
-			lease.Release()
-		}
-	}
-
-	if preferredAccountID > 0 {
-		lease, err := p.leaseAccount(ctx, userID, preferredAccountID)
-		if err == nil {
-			leases = append(leases, lease)
-			seen[lease.AccountID()] = struct{}{}
-		}
-	}
 	var firstErr error
-	for len(leases) < accounts {
-		lease, err := p.leaser.LeaseAccount(ctx, userID, OperationDownload, p.config.ReadParallel)
+	if totalConnections < 1 {
+		totalConnections = 1
+	}
+	if multi, ok := p.leaser.(MultiAccountLeaser); ok {
+		var err error
+		leases, err = multi.LeaseAccounts(ctx, userID, OperationDownload, accounts, totalConnections, preferredAccountID)
 		if err != nil {
-			firstErr = err
-			break
+			for _, lease := range leases {
+				lease.Release()
+			}
+			return nil, err
 		}
-		if _, duplicate := seen[lease.AccountID()]; duplicate {
-			lease.Release()
-			break
+	} else {
+		seen := make(map[int64]struct{}, accounts)
+		if preferredAccountID > 0 {
+			lease, err := p.leaseAccount(ctx, userID, preferredAccountID, totalConnections)
+			if err == nil {
+				leases = append(leases, lease)
+				seen[lease.AccountID()] = struct{}{}
+			}
 		}
-		seen[lease.AccountID()] = struct{}{}
-		leases = append(leases, lease)
+		for len(leases) < accounts {
+			lease, err := p.leaser.LeaseAccount(ctx, userID, OperationDownload, totalConnections)
+			if err != nil {
+				firstErr = err
+				break
+			}
+			if _, duplicate := seen[lease.AccountID()]; duplicate {
+				lease.Release()
+				break
+			}
+			seen[lease.AccountID()] = struct{}{}
+			leases = append(leases, lease)
+		}
 	}
 	if len(leases) == 0 {
 		if firstErr != nil {
@@ -173,47 +195,73 @@ func (p *DownloadClientPool) openDownloadSessionMulti(ctx context.Context, userI
 		return nil, ErrClientUnavailable
 	}
 
-	clients := make([]sessionClient, 0, len(leases))
+	// ReadParallel is the total number of requests this stream can have in
+	// flight. Distribute that pool capacity across leased accounts instead of
+	// creating ReadParallel connections for every bot (12 bots × 16 would be
+	// 192 connections for a single stream).
+	poolConnections := (totalConnections + len(leases) - 1) / len(leases)
+	if poolConnections < 1 {
+		poolConnections = 1
+	}
+
+	type pendingClient struct {
+		entry *downloadClientEntry
+		lease AccountLease
+	}
+	pending := make([]pendingClient, 0, len(leases))
 	for _, lease := range leases {
 		entry, created, err := p.lease(downloadClientKey{userID: userID, accountID: lease.AccountID()})
 		if err != nil {
 			lease.Release()
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
+		pending = append(pending, pendingClient{entry: entry, lease: lease})
 		if created {
-			p.start(entry, lease)
+			// Start every cold account before waiting for any one of them. This
+			// keeps a slow bot connection from serially delaying the rest.
+			p.start(entry, lease, poolConnections)
 		}
-		release := func() {
-			p.release(entry)
-			lease.Release()
+	}
+	releasePending := func() {
+		for _, candidate := range pending {
+			p.release(candidate.entry)
+			candidate.lease.Release()
 		}
+	}
+
+	clients := make([]sessionClient, 0, len(pending))
+	for _, candidate := range pending {
 		select {
-		case <-entry.ready:
+		case <-candidate.entry.ready:
 			p.mu.Lock()
-			api, runErr := entry.api, entry.err
-			clientID := entry.clientID
+			api, runErr := candidate.entry.api, candidate.entry.err
+			clientID := candidate.entry.clientID
 			p.mu.Unlock()
 			if api == nil {
-				release()
+				p.release(candidate.entry)
+				candidate.lease.Release()
 				if firstErr == nil && runErr != nil {
 					firstErr = runErr
 				}
 				continue
 			}
+			entry, lease := candidate.entry, candidate.lease
 			clients = append(clients, sessionClient{
 				api: api, clientID: clientID,
 				close: func() error {
-					release()
+					p.release(entry)
+					lease.Release()
 					return nil
 				},
 			})
 		case <-ctx.Done():
-			release()
-			releaseLeases()
+			releasePending()
 			return nil, ctx.Err()
 		case <-p.ctx.Done():
-			release()
-			releaseLeases()
+			releasePending()
 			return nil, ErrDownloadClientPoolClosed
 		}
 	}
@@ -233,18 +281,34 @@ func (p *DownloadClientPool) openDownloadSessionMulti(ctx context.Context, userI
 	}, nil
 }
 
-func (p *DownloadClientPool) leaseAccount(ctx context.Context, userID, preferredAccountID int64) (AccountLease, error) {
+func (p *DownloadClientPool) leaseAccount(ctx context.Context, userID, preferredAccountID int64, connections int) (AccountLease, error) {
 	if preferred, ok := p.leaser.(PreferredAccountLeaser); ok {
-		return preferred.LeasePreferredAccount(ctx, userID, OperationDownload, p.config.ReadParallel, preferredAccountID)
+		return preferred.LeasePreferredAccount(ctx, userID, OperationDownload, connections, preferredAccountID)
 	}
-	return p.leaser.LeaseAccount(ctx, userID, OperationDownload, p.config.ReadParallel)
+	return p.leaser.LeaseAccount(ctx, userID, OperationDownload, connections)
 }
 
 // Warm connects the download client for an account without starting a stream.
 // The pool keeps it alive afterwards so the player's first request does not pay
 // the Telegram connect and authentication cost.
 func (p *DownloadClientPool) Warm(ctx context.Context, userID, accountID int64) error {
-	session, err := p.OpenDownloadSessionMulti(ctx, userID, 1, accountID)
+	if p == nil || userID <= 0 {
+		return ErrInvalidRequest
+	}
+	// A warm-up only needs the preferred account. Size its pool for its likely
+	// share of the stream, with a small floor so the pinned client is not
+	// under-provisioned when the stream fans out across bots.
+	connections := min(p.config.ReadParallel, 4)
+	if lister, ok := p.leaser.(DownloadAccountLister); ok {
+		if accounts, err := lister.DownloadAccounts(ctx, userID); err == nil && len(accounts) > 0 {
+			perAccount := (p.config.ReadParallel + len(accounts) - 1) / len(accounts)
+			connections = max(connections, perAccount)
+		}
+	}
+	if connections < 1 {
+		connections = 1
+	}
+	session, err := p.openDownloadSessionMulti(ctx, userID, 1, accountID, connections)
 	if err != nil {
 		return err
 	}
@@ -273,10 +337,10 @@ func (p *DownloadClientPool) lease(key downloadClientKey) (*downloadClientEntry,
 
 // start runs the warm client through the lease that created it. The client
 // outlives that lease; later sessions take their own leases on the account.
-func (p *DownloadClientPool) start(entry *downloadClientEntry, lease AccountLease) {
+func (p *DownloadClientPool) start(entry *downloadClientEntry, lease AccountLease, connections int) {
 	go func() {
 		ready := sync.Once{}
-		err := lease.RunPooled(entry.ctx, p.config.ReadParallel, func(runCtx context.Context, api *tg.Client) error {
+		err := lease.RunPooled(entry.ctx, connections, func(runCtx context.Context, api *tg.Client) error {
 			p.mu.Lock()
 			entry.api = api
 			entry.clientID, _ = ClientID(runCtx)

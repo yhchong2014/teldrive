@@ -191,13 +191,29 @@ func (f *Factory) PooledAPI(client *telegram.Client, accountID int64, size int) 
 		next: f.wrapInvoker(accountID, invoker),
 		size: int64(size),
 		openDC: func(ctx context.Context, dc int, max int64) (telegram.CloseInvoker, error) {
-			return client.DC(ctx, dc, max)
+			target, err := client.DC(ctx, dc, max)
+			if err != nil {
+				return nil, err
+			}
+			return &closeableInvoker{Invoker: f.wrapInvoker(accountID, target), close: target.Close}, nil
 		},
 	}
 	closePool := func() error {
 		return errors.Join(migrating.Close(), invoker.Close())
 	}
 	return tg.NewClient(migrating), closePool, nil
+}
+
+type closeableInvoker struct {
+	tg.Invoker
+	close func() error
+}
+
+func (i *closeableInvoker) Close() error {
+	if i == nil || i.close == nil {
+		return nil
+	}
+	return i.close()
 }
 
 // accountMiddleware returns a fresh invoke middleware chain for one Telegram

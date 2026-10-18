@@ -603,7 +603,7 @@ func (r *telegramRangeReader) fill(ctx context.Context, clients []rangeClient, r
 			}
 
 			if err != nil {
-				result.err = fmt.Errorf("download Telegram document chunk at %d: %w", plan.offset, err)
+				result.err = fmt.Errorf("download Telegram document chunk for account %d at %d: %w", client.clientID, plan.offset, err)
 			} else if file, ok := response.(*tg.UploadFile); !ok {
 				result.err = fmt.Errorf("unexpected Telegram download response %T", response)
 			} else if end := plan.skip + plan.length; len(file.Bytes) < end {
