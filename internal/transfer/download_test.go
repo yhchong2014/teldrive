@@ -76,6 +76,38 @@ func TestPlanSegmentsEmptyFile(t *testing.T) {
 	}
 }
 
+func TestWarmStreamPrimesFirstPartForPreferredAccount(t *testing.T) {
+	fileID := uuid.New()
+	catalog := &downloadCatalog{
+		file: &sqlcgen.File{Size: pgtype.Int8{Int64: 10, Valid: true}},
+		parts: []*sqlcgen.FilePart{
+			{PartNo: 2, ChannelID: 12, MessageID: 102},
+			{PartNo: 1, ChannelID: 11, MessageID: 101},
+		},
+	}
+	storage := &streamWarmupStorage{}
+	downloader := NewDownloader(catalog, storage, nil)
+	downloader.ConfigureStreaming(0, true)
+
+	if err := downloader.WarmStream(context.Background(), 7, fileID, 888); err != nil {
+		t.Fatalf("WarmStream() error = %v", err)
+	}
+	if storage.userID != 7 || storage.accountID != 888 || storage.channelID != 11 || storage.messageID != 101 {
+		t.Fatalf("warmed route = user:%d account:%d channel:%d message:%d, want user:7 account:888 channel:11 message:101",
+			storage.userID, storage.accountID, storage.channelID, storage.messageID)
+	}
+}
+
+type streamWarmupStorage struct {
+	downloadStorage
+	userID, accountID, channelID, messageID int64
+}
+
+func (s *streamWarmupStorage) WarmDownloadRange(_ context.Context, userID, accountID, channelID, messageID int64) error {
+	s.userID, s.accountID, s.channelID, s.messageID = userID, accountID, channelID, messageID
+	return nil
+}
+
 func TestDownloadReaderSeekAndConcurrentReadAt(t *testing.T) {
 	fileID := uuid.New()
 	catalog := &downloadCatalog{

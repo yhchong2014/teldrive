@@ -204,11 +204,7 @@ func (p *DownloadClientPool) openDownloadSessionMulti(ctx context.Context, userI
 		poolConnections = 1
 	}
 
-	type pendingClient struct {
-		entry *downloadClientEntry
-		lease AccountLease
-	}
-	pending := make([]pendingClient, 0, len(leases))
+	candidates := make([]*pooledDownloadClient, 0, len(leases))
 	for _, lease := range leases {
 		entry, created, err := p.lease(downloadClientKey{userID: userID, accountID: lease.AccountID()})
 		if err != nil {
@@ -218,67 +214,198 @@ func (p *DownloadClientPool) openDownloadSessionMulti(ctx context.Context, userI
 			}
 			continue
 		}
-		pending = append(pending, pendingClient{entry: entry, lease: lease})
+		candidate := &pooledDownloadClient{entry: entry, lease: lease}
+		candidates = append(candidates, candidate)
 		if created {
-			// Start every cold account before waiting for any one of them. This
-			// keeps a slow bot connection from serially delaying the rest.
+			// Start every cold account immediately, but do not make VLC wait for
+			// the slowest account before the first ready client can serve bytes.
 			p.start(entry, lease, poolConnections)
 		}
 	}
-	releasePending := func() {
-		for _, candidate := range pending {
-			p.release(candidate.entry)
-			candidate.lease.Release()
-		}
-	}
-
-	clients := make([]sessionClient, 0, len(pending))
-	for _, candidate := range pending {
-		select {
-		case <-candidate.entry.ready:
-			p.mu.Lock()
-			api, runErr := candidate.entry.api, candidate.entry.err
-			clientID := candidate.entry.clientID
-			p.mu.Unlock()
-			if api == nil {
-				p.release(candidate.entry)
-				candidate.lease.Release()
-				if firstErr == nil && runErr != nil {
-					firstErr = runErr
-				}
-				continue
-			}
-			entry, lease := candidate.entry, candidate.lease
-			clients = append(clients, sessionClient{
-				api: api, clientID: clientID,
-				close: func() error {
-					p.release(entry)
-					lease.Release()
-					return nil
-				},
-			})
-		case <-ctx.Done():
-			releasePending()
-			return nil, ctx.Err()
-		case <-p.ctx.Done():
-			releasePending()
-			return nil, ErrDownloadClientPoolClosed
-		}
-	}
-	if len(clients) == 0 {
+	if len(candidates) == 0 {
 		if firstErr != nil {
 			return nil, firstErr
 		}
 		return nil, ErrClientUnavailable
 	}
+
+	clients := newPooledDownloadClients(ctx, p, candidates, firstErr)
+	ready, err := clients.wait(ctx, nil)
+	if err != nil {
+		_ = clients.Close()
+		return nil, err
+	}
+	initial := ready[0]
 	return &gotdDownloadSession{
-		clients:              clients,
-		clientID:             clients[0].clientID,
+		clients: []sessionClient{{api: initial.api, clientID: initial.clientID}},
+		clientID:             initial.clientID,
+		clientSource:         clients.wait,
+		closeFn:              clients.Close,
 		downloadReadBuffers:  p.config.ReadBuffers,
 		downloadReadParallel: p.config.ReadParallel,
 		globalCache:          p.globalCache,
 		stats:                newStreamStats(),
 	}, nil
+}
+
+type pooledDownloadClient struct {
+	entry    *downloadClientEntry
+	lease    AccountLease
+	api      *tg.Client
+	clientID int64
+	ready    bool
+	release  sync.Once
+}
+
+func (c *pooledDownloadClient) releaseLease(pool *DownloadClientPool) {
+	if c == nil {
+		return
+	}
+	c.release.Do(func() {
+		pool.release(c.entry)
+		c.lease.Release()
+	})
+}
+
+type pooledDownloadClients struct {
+	pool       *DownloadClientPool
+	ctx        context.Context
+	cancel     context.CancelFunc
+	mu         sync.Mutex
+	candidates []*pooledDownloadClient
+	remaining  int
+	firstErr   error
+	changed    chan struct{}
+	closeOnce  sync.Once
+}
+
+func newPooledDownloadClients(ctx context.Context, pool *DownloadClientPool, candidates []*pooledDownloadClient, firstErr error) *pooledDownloadClients {
+	setupCtx, cancel := context.WithCancel(ctx)
+	clients := &pooledDownloadClients{
+		pool: pool, ctx: setupCtx, cancel: cancel,
+		candidates: candidates, remaining: len(candidates), firstErr: firstErr,
+		changed: make(chan struct{}),
+	}
+	for _, candidate := range candidates {
+		go clients.watch(candidate)
+	}
+	return clients
+}
+
+func (s *pooledDownloadClients) watch(candidate *pooledDownloadClient) {
+	select {
+	case <-candidate.entry.ready:
+		s.pool.mu.Lock()
+		api, clientID, runErr := candidate.entry.api, candidate.entry.clientID, candidate.entry.err
+		s.pool.mu.Unlock()
+
+		s.mu.Lock()
+		candidate.api, candidate.clientID, candidate.ready = api, clientID, true
+		s.remaining--
+		if api == nil && runErr != nil && s.firstErr == nil {
+			s.firstErr = runErr
+		}
+		s.mu.Unlock()
+		if api == nil {
+			candidate.releaseLease(s.pool)
+		}
+		s.signal()
+	case <-s.ctx.Done():
+	}
+}
+
+func (s *pooledDownloadClients) signal() {
+	s.mu.Lock()
+	close(s.changed)
+	s.changed = make(chan struct{})
+	s.mu.Unlock()
+}
+
+func (s *pooledDownloadClients) wait(ctx context.Context, excluded map[int64]struct{}) ([]rangeClient, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		s.mu.Lock()
+		changed := s.changed
+		s.mu.Unlock()
+
+		clients := s.available(excluded)
+		if len(clients) > 0 {
+			return clients, nil
+		}
+
+		s.mu.Lock()
+		if s.changed != changed {
+			s.mu.Unlock()
+			continue
+		}
+		remaining, firstErr := s.remaining, s.firstErr
+		s.mu.Unlock()
+		if remaining == 0 {
+			if firstErr != nil {
+				return nil, firstErr
+			}
+			return nil, ErrClientUnavailable
+		}
+
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-s.ctx.Done():
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, ErrClientUnavailable
+		case <-s.pool.ctx.Done():
+			return nil, ErrDownloadClientPoolClosed
+		}
+	}
+}
+
+func (s *pooledDownloadClients) available(excluded map[int64]struct{}) []rangeClient {
+	type candidateClient struct {
+		candidate *pooledDownloadClient
+		api       *tg.Client
+		clientID  int64
+	}
+	s.mu.Lock()
+	ready := make([]candidateClient, 0, len(s.candidates))
+	for _, candidate := range s.candidates {
+		if candidate.ready && candidate.api != nil {
+			ready = append(ready, candidateClient{candidate: candidate, api: candidate.api, clientID: candidate.clientID})
+		}
+	}
+	s.mu.Unlock()
+
+	clients := make([]rangeClient, 0, len(ready))
+	for _, candidate := range ready {
+		if _, skip := excluded[candidate.clientID]; skip {
+			continue
+		}
+		if _, err := s.pool.client(candidate.candidate.entry, candidate.api); err != nil {
+			continue
+		}
+		clients = append(clients, rangeClient{api: candidate.api, clientID: candidate.clientID})
+	}
+	return clients
+}
+
+func (s *pooledDownloadClients) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.closeOnce.Do(func() {
+		s.cancel()
+		s.mu.Lock()
+		candidates := append([]*pooledDownloadClient(nil), s.candidates...)
+		s.mu.Unlock()
+		for _, candidate := range candidates {
+			candidate.releaseLease(s.pool)
+		}
+	})
+	return nil
 }
 
 func (p *DownloadClientPool) leaseAccount(ctx context.Context, userID, preferredAccountID int64, connections int) (AccountLease, error) {
@@ -292,8 +419,16 @@ func (p *DownloadClientPool) leaseAccount(ctx context.Context, userID, preferred
 // The pool keeps it alive afterwards so the player's first request does not pay
 // the Telegram connect and authentication cost.
 func (p *DownloadClientPool) Warm(ctx context.Context, userID, accountID int64) error {
+	session, err := p.openWarmSession(ctx, userID, accountID)
+	if err != nil {
+		return err
+	}
+	return session.Close()
+}
+
+func (p *DownloadClientPool) openWarmSession(ctx context.Context, userID, accountID int64) (DownloadSession, error) {
 	if p == nil || userID <= 0 {
-		return ErrInvalidRequest
+		return nil, ErrInvalidRequest
 	}
 	// A warm-up only needs the preferred account. Size its pool for its likely
 	// share of the stream, with a small floor so the pinned client is not
@@ -308,11 +443,7 @@ func (p *DownloadClientPool) Warm(ctx context.Context, userID, accountID int64) 
 	if connections < 1 {
 		connections = 1
 	}
-	session, err := p.openDownloadSessionMulti(ctx, userID, 1, accountID, connections)
-	if err != nil {
-		return err
-	}
-	return session.Close()
+	return p.openDownloadSessionMulti(ctx, userID, 1, accountID, connections)
 }
 
 // lease returns the live warm client for key, or registers a new one that the

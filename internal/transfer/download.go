@@ -50,7 +50,7 @@ func NewDownloader(catalog FileCatalog, storage telegramstore.Storage, keys KeyP
 }
 
 // ConfigureStreaming controls how many Telegram accounts may serve one stream
-// and whether the first account is connected when a stream token is issued.
+// and whether the preferred account's file route is primed when a token is issued.
 func (d *Downloader) ConfigureStreaming(accounts int, warmup bool) {
 	if d == nil {
 		return
@@ -59,19 +59,33 @@ func (d *Downloader) ConfigureStreaming(accounts int, warmup bool) {
 	d.streamWarmup = warmup
 }
 
-// WarmStream connects a pooled download client ahead of playback so the media
-// player's first request does not pay the connect and authentication cost.
-func (d *Downloader) WarmStream(ctx context.Context, userID, accountID int64) error {
-	if d == nil || d.storage == nil || !d.streamWarmup || userID <= 0 {
+// WarmStream primes the preferred account's file route before playback so VLC
+// can start without waiting for a cold Telegram datacenter migration.
+func (d *Downloader) WarmStream(ctx context.Context, userID int64, fileID uuid.UUID, accountID int64) error {
+	if d == nil || d.storage == nil || d.catalog == nil || !d.streamWarmup || userID <= 0 || fileID == uuid.Nil || accountID <= 0 {
 		return nil
 	}
-	warmer, ok := d.storage.(interface {
-		WarmDownload(context.Context, int64, int64) error
-	})
+	warmer, ok := d.storage.(telegramstore.DownloadRangeWarmer)
 	if !ok {
 		return nil
 	}
-	return warmer.WarmDownload(ctx, userID, accountID)
+	if availability, ok := d.storage.(telegramstore.DownloadRangeWarmupAvailability); ok && !availability.DownloadRangeWarmupAvailable() {
+		return nil
+	}
+	parts, err := d.catalog.Parts(ctx, userID, fileID)
+	if err != nil {
+		return err
+	}
+	var first *sqlcgen.FilePart
+	for _, part := range parts {
+		if part != nil && (first == nil || part.PartNo < first.PartNo) {
+			first = part
+		}
+	}
+	if first == nil {
+		return nil
+	}
+	return warmer.WarmDownloadRange(ctx, userID, accountID, first.ChannelID, first.MessageID)
 }
 
 type DownloadRequest struct {

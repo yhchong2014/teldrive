@@ -60,7 +60,7 @@ type Telegram struct {
 	DownloadReadParallel      int             `koanf:"download-read-parallel" default:"4" validate:"min=1,max=32" description:"Total concurrent Telegram chunk fetches per download stream, distributed across the selected accounts"`
 	DownloadBotsPerStream     int             `koanf:"download-bots-per-stream" default:"0" validate:"min=0,max=32" description:"Telegram bots that may serve one download stream; zero uses every eligible bot"`
 	DownloadClientIdleTimeout time.Duration   `koanf:"download-client-idle-timeout" default:"30m" validate:"gte=0" description:"How long a warm download client may stay idle before it is closed"`
-	DownloadWarmup            bool            `koanf:"download-warmup" default:"true" description:"Connect the download client when a stream token is issued so playback starts sooner"`
+	DownloadWarmup            bool            `koanf:"download-warmup" default:"true" description:"Prime the preferred Telegram file route when a stream token is issued so playback starts sooner"`
 	RandomizePartNames        bool            `koanf:"randomize-part-names" default:"true" description:"Randomize Telegram document names"`
 	AutoChannelCreate         bool            `koanf:"auto-channel-create" default:"true" description:"Create storage channels automatically"`
 	BotRotationBackend        string          `koanf:"bot-rotation-backend" default:"memory" validate:"oneof=memory database" description:"Bot rotation backend: memory for single-instance speed or database for cluster-wide coordination"`

@@ -19,8 +19,9 @@ type accountLeaserStub struct {
 	next        int
 	active      map[int64]int
 	leased      []int
-	connections []int
-	beforeReady func(context.Context)
+	connections        []int
+	beforeReady        func(context.Context)
+	beforeReadyAccount func(context.Context, int64)
 
 	runs  atomic.Int32
 	exits atomic.Int32
@@ -71,7 +72,9 @@ func (l *accountLeaseStub) RunPooled(ctx context.Context, connections int, fn fu
 	l.leaser.mu.Unlock()
 	l.leaser.runs.Add(1)
 	defer l.leaser.exits.Add(1)
-	if l.leaser.beforeReady != nil {
+	if l.leaser.beforeReadyAccount != nil {
+		l.leaser.beforeReadyAccount(ctx, l.account)
+	} else if l.leaser.beforeReady != nil {
 		l.leaser.beforeReady(ctx)
 	}
 	return fn(WithClientID(ctx, l.account), new(tg.Client))
@@ -219,6 +222,7 @@ func TestDownloadClientPoolDistributesConnectionPoolAcrossAccounts(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitForConnectionCount(t, runner, 3)
 	runner.mu.Lock()
 	connections := append([]int(nil), runner.connections...)
 	runner.mu.Unlock()
@@ -274,6 +278,78 @@ func TestDownloadClientPoolStartsColdAccountsConcurrently(t *testing.T) {
 		t.Fatalf("cold clients started = %d, want 3", got)
 	}
 	_ = session.Close()
+	closeDownloadClientPool(t, pool)
+}
+
+func TestPooledDownloadClientSignalBroadcastsToWaiters(t *testing.T) {
+	const waiters = 3
+	state := &pooledDownloadClients{changed: make(chan struct{})}
+	captured := make(chan struct{}, waiters)
+	completed := make(chan struct{}, waiters)
+	for range waiters {
+		go func() {
+			state.mu.Lock()
+			changed := state.changed
+			state.mu.Unlock()
+			captured <- struct{}{}
+			<-changed
+			completed <- struct{}{}
+		}()
+	}
+	for range waiters {
+		<-captured
+	}
+
+	state.signal()
+	for range waiters {
+		select {
+		case <-completed:
+		case <-time.After(time.Second):
+			t.Fatal("signal did not wake every waiter")
+		}
+	}
+}
+
+func TestDownloadClientPoolReturnsFirstReadyAccountAndAddsLateClients(t *testing.T) {
+	runner := newAccountLeaserStub(101, 102)
+	releasePreferred := make(chan struct{})
+	runner.beforeReadyAccount = func(ctx context.Context, accountID int64) {
+		if accountID == 101 {
+			select {
+			case <-releasePreferred:
+			case <-ctx.Done():
+			}
+		}
+	}
+	pool := newTestDownloadClientPool(t, runner, DownloadClientPoolConfig{ReadParallel: 4})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	session, err := pool.OpenDownloadSessionMulti(ctx, 9, 2, 101)
+	if err != nil {
+		t.Fatalf("OpenDownloadSessionMulti() = %v, want the faster account to unblock open", err)
+	}
+	gotdSession := session.(*gotdDownloadSession)
+	clients, err := gotdSession.rangeClients(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clients) != 1 || clients[0].clientID != 102 {
+		t.Fatalf("initial ready clients = %+v, want only account 102", clients)
+	}
+
+	close(releasePreferred)
+	waitForRangeClientCount(t, gotdSession, ctx, 2)
+	clients, err = gotdSession.rangeClients(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clients) != 2 || clients[0].clientID != 101 || clients[1].clientID != 102 {
+		t.Fatalf("ready clients after preferred startup = %+v, want [101 102]", clients)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
 	closeDownloadClientPool(t, pool)
 }
 
@@ -378,6 +454,41 @@ func waitForExits(t *testing.T, runner *accountLeaserStub, want int32) {
 	if got := runner.exits.Load(); got != want {
 		t.Fatalf("runner exits = %d, want %d", got, want)
 	}
+}
+
+func waitForConnectionCount(t *testing.T, runner *accountLeaserStub, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		runner.mu.Lock()
+		count := len(runner.connections)
+		runner.mu.Unlock()
+		if count == want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	runner.mu.Lock()
+	count := len(runner.connections)
+	runner.mu.Unlock()
+	t.Fatalf("pooled connection count = %d, want %d", count, want)
+}
+
+func waitForRangeClientCount(t *testing.T, session *gotdDownloadSession, ctx context.Context, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		clients, err := session.rangeClients(ctx, nil)
+		if err == nil && len(clients) == want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	clients, err := session.rangeClients(ctx, nil)
+	if err != nil {
+		t.Fatalf("rangeClients() = %v, want %d ready clients", err, want)
+	}
+	t.Fatalf("range client count = %d, want %d", len(clients), want)
 }
 
 func closeDownloadClientPool(t *testing.T, pool *DownloadClientPool) {

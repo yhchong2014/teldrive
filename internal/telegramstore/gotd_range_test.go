@@ -2,6 +2,7 @@ package telegramstore
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -156,6 +157,152 @@ func TestTelegramRangeReaderBoundsReadAheadBehindSlowChunk(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("fill() did not complete")
+	}
+}
+
+func TestTelegramRangeReaderDefersOutOfOrderErrorUntilPriorChunksAreDelivered(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	chunkErr := errors.New("retryUntilAck: retry limit reached")
+	releaseFirst := make(chan struct{})
+	invoker := &outOfOrderErrorDownloadInvoker{
+		firstStarted: make(chan struct{}),
+		failed:       make(chan struct{}),
+		releaseFirst: releaseFirst,
+		chunkErr:     chunkErr,
+	}
+	api := tg.NewClient(invoker)
+	reader := newTelegramRangeReader(ctx, cancel, 2, 2, nil)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- reader.fill(ctx, []rangeClient{{api: api}}, RangeRequest{Offset: 0, Length: 2 * telegramReadChunk}, &tg.InputDocumentFileLocation{}, 2*telegramReadChunk)
+	}()
+
+	select {
+	case <-invoker.firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first chunk did not start")
+	}
+	select {
+	case <-invoker.failed:
+	case <-time.After(time.Second):
+		t.Fatal("future chunk did not fail")
+	}
+	select {
+	case err := <-errCh:
+		t.Fatalf("fill() returned %v before the earlier chunk completed", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(releaseFirst)
+	select {
+	case buffer := <-reader.buffers:
+		if got := len(buffer.buf); got != telegramReadChunk {
+			t.Fatalf("delivered bytes = %d, want %d before reporting the future error", got, telegramReadChunk)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("earlier chunk was not delivered before the future error")
+	}
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, chunkErr) {
+			t.Fatalf("fill() error = %v, want %v", err, chunkErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("fill() did not report the error when it reached that chunk")
+	}
+}
+
+type outOfOrderErrorDownloadInvoker struct {
+	firstStarted chan struct{}
+	failed       chan struct{}
+	releaseFirst <-chan struct{}
+	chunkErr     error
+}
+
+func (i *outOfOrderErrorDownloadInvoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
+	request := input.(*tg.UploadGetFileRequest)
+	switch request.Offset {
+	case 0:
+		close(i.firstStarted)
+		select {
+		case <-i.releaseFirst:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		box := output.(*tg.UploadFileBox)
+		box.File = &tg.UploadFile{Bytes: make([]byte, request.Limit)}
+		return nil
+	case telegramReadChunk:
+		close(i.failed)
+		return i.chunkErr
+	default:
+		return errors.New("unexpected chunk offset")
+	}
+}
+
+func TestTelegramRangeReaderFailsOverRetryUntilAckToAnotherAccount(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	failed := &retryUntilAckDownloadInvoker{}
+	fallback := &fallbackDownloadInvoker{}
+	clients := []rangeClient{
+		{api: tg.NewClient(failed), clientID: 101},
+		{api: tg.NewClient(fallback), clientID: 102},
+	}
+	reader := newTelegramRangeReader(ctx, cancel, 2, 1, nil)
+	if err := reader.fill(ctx, clients, RangeRequest{ChannelID: 55, MessageID: 5, Offset: 0, Length: telegramReadAlign}, &tg.InputDocumentFileLocation{ID: 1}, telegramReadAlign); err != nil {
+		t.Fatalf("fill() error = %v, want fallback success", err)
+	}
+	if got := failed.calls.Load(); got != 1 {
+		t.Fatalf("failing account calls = %d, want 1 before failover", got)
+	}
+	if got := fallback.downloads.Load(); got != 1 {
+		t.Fatalf("fallback account downloads = %d, want 1", got)
+	}
+	select {
+	case buffer := <-reader.buffers:
+		if got := len(buffer.buf); got != telegramReadAlign {
+			t.Fatalf("delivered bytes = %d, want %d", got, telegramReadAlign)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("fallback chunk was not delivered")
+	}
+}
+
+type retryUntilAckDownloadInvoker struct{ calls atomic.Int32 }
+
+func (i *retryUntilAckDownloadInvoker) Invoke(_ context.Context, input bin.Encoder, _ bin.Decoder) error {
+	if _, ok := input.(*tg.UploadGetFileRequest); !ok {
+		return errors.New("unexpected Telegram request")
+	}
+	i.calls.Add(1)
+	return errors.New("rpcDoRequest: retryUntilAck: retry limit reached after 10 attempts")
+}
+
+type fallbackDownloadInvoker struct{ downloads atomic.Int32 }
+
+func (i *fallbackDownloadInvoker) Invoke(_ context.Context, input bin.Encoder, output bin.Decoder) error {
+	switch request := input.(type) {
+	case *tg.ChannelsGetChannelsRequest:
+		box := output.(*tg.MessagesChatsBox)
+		box.Chats = &tg.MessagesChats{Chats: []tg.ChatClass{&tg.Channel{ID: 55, AccessHash: 9, Title: "media"}}}
+		return nil
+	case *tg.ChannelsGetMessagesRequest:
+		box := output.(*tg.MessagesMessagesBox)
+		box.Messages = &tg.MessagesMessages{Messages: []tg.MessageClass{&tg.Message{ID: 5, Media: &tg.MessageMediaDocument{
+			Document: &tg.Document{ID: 2, AccessHash: 10, FileReference: []byte{1}, Size: telegramReadAlign, MimeType: "video/mp4"},
+		}}}}
+		return nil
+	case *tg.UploadGetFileRequest:
+		i.downloads.Add(1)
+		box := output.(*tg.UploadFileBox)
+		box.File = &tg.UploadFile{Bytes: make([]byte, request.Limit)}
+		return nil
+	default:
+		return errors.New("unexpected Telegram request")
 	}
 }
 
