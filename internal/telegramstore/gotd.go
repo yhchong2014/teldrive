@@ -22,15 +22,16 @@ import (
 )
 
 const (
-	defaultUploadThreads        = 4
-	telegramUploadPart          = 512 * 1024
-	telegramReadChunk           = 1024 * 1024
-	telegramReadAlign           = 4 * 1024
-	defaultTelegramReadBuffers  = 32
-	defaultTelegramReadParallel = 4
-	defaultTelegramReadTimeout  = 30 * time.Second
-	defaultTelegramReadAttempts = 3
-	deleteBatchSize             = 100
+	defaultUploadThreads                = 4
+	telegramUploadPart                  = 512 * 1024
+	telegramReadChunk                   = 1024 * 1024
+	telegramReadAlign                   = 4 * 1024
+	defaultTelegramReadBuffers          = 32
+	defaultTelegramReadParallel         = 4
+	defaultTelegramReadTimeout          = 30 * time.Second
+	defaultTelegramReadAttempts         = 3
+	defaultTelegramReadFailoverAccounts = 2
+	deleteBatchSize                     = 100
 )
 
 // Runner owns Telegram authentication, client lifetime, bot selection, retry,
@@ -204,6 +205,40 @@ func (s *GotdStorage) WarmDownload(ctx context.Context, userID, accountID int64)
 	return s.downloadPool.Warm(ctx, userID, accountID)
 }
 
+// DownloadRangeWarmupAvailable reports whether the configured storage can warm
+// Telegram file routes ahead of playback.
+func (s *GotdStorage) DownloadRangeWarmupAvailable() bool {
+	return s != nil && s.downloadPool != nil
+}
+
+// WarmDownloadRange opens the preferred account's file-DC route and fetches a
+// small prefix before the player starts. The pooled client and account-scoped
+// document location are then reused by the actual stream request.
+func (s *GotdStorage) WarmDownloadRange(ctx context.Context, userID, accountID, channelID, messageID int64) error {
+	if s == nil || s.downloadPool == nil || userID <= 0 || accountID <= 0 || channelID == 0 || messageID <= 0 {
+		return nil
+	}
+	session, err := s.downloadPool.openWarmSession(ctx, userID, accountID)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	reader, err := session.OpenRange(ctx, RangeRequest{
+		UserID: userID, ChannelID: channelID, MessageID: messageID, Offset: 0, Length: 4 * 1024,
+	})
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	var firstByte [1]byte
+	_, err = io.ReadFull(reader, firstByte[:])
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
+}
+
 // rangeClient pairs a Telegram API client with the account ID behind it. File
 // references are bound to the account that fetched them, so each client keeps
 // its own cached document location.
@@ -211,6 +246,8 @@ type rangeClient struct {
 	api      *tg.Client
 	clientID int64
 }
+
+type rangeClientSource func(context.Context, map[int64]struct{}) ([]rangeClient, error)
 
 func fillRangeWithLocation(ctx context.Context, clients []rangeClient, request RangeRequest, reader *telegramRangeReader, location *tg.InputDocumentFileLocation, documentSize int64) error {
 	if request.Offset > documentSize {
@@ -231,6 +268,7 @@ type gotdDownloadSession struct {
 	api                  *tg.Client
 	err                  error
 	clientFn             func() (*tg.Client, error)
+	clientSource         rangeClientSource
 	closeFn              func() error
 	close                sync.Once
 	mu                   sync.Mutex
@@ -331,7 +369,7 @@ func (s *GotdStorage) OpenDownloadSession(ctx context.Context, userID int64) (Do
 }
 
 func (s *gotdDownloadSession) Metadata(ctx context.Context, request MetadataRequest) (StoredPart, error) {
-	clients, err := s.rangeClients()
+	clients, err := s.rangeClients(ctx, nil)
 	if err != nil {
 		return StoredPart{}, err
 	}
@@ -344,32 +382,39 @@ func (s *gotdDownloadSession) Metadata(ctx context.Context, request MetadataRequ
 }
 
 func (s *gotdDownloadSession) OpenRange(ctx context.Context, request RangeRequest) (io.ReadCloser, error) {
-	clients, err := s.rangeClients()
+	clients, err := s.rangeClients(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
+	primary := clients[0]
 	streamCtx, cancel := context.WithCancel(ctx)
 	reader := newTelegramRangeReader(streamCtx, cancel, s.downloadReadBuffers, s.downloadReadParallel, s.globalCache)
 	reader.stats = s.stats
 	go func() {
-		primary := clients[0]
 		location, size, locationErr := fetchDocumentLocation(WithClientID(streamCtx, primary.clientID), primary.api, request.ChannelID, request.MessageID, s.globalCache)
 		if locationErr != nil {
 			reader.finish(locationErr)
 			return
 		}
-		reader.finish(fillRangeWithLocation(streamCtx, clients, request, reader, location, size))
+		reader.finish(fillRangeWithClientSource(streamCtx, s.rangeClients, primary, request, reader, location, size))
 	}()
 	return reader, nil
 }
 
-func (s *gotdDownloadSession) rangeClients() ([]rangeClient, error) {
+func (s *gotdDownloadSession) rangeClients(ctx context.Context, excluded map[int64]struct{}) ([]rangeClient, error) {
+	if s.clientSource != nil {
+		return s.clientSource(ctx, excluded)
+	}
 	if len(s.clients) > 0 {
 		clients := make([]rangeClient, 0, len(s.clients))
 		for _, client := range s.clients {
-			if client.api != nil {
-				clients = append(clients, rangeClient{api: client.api, clientID: client.clientID})
+			if client.api == nil {
+				continue
 			}
+			if _, skip := excluded[client.clientID]; skip {
+				continue
+			}
+			clients = append(clients, rangeClient{api: client.api, clientID: client.clientID})
 		}
 		if len(clients) == 0 {
 			return nil, ErrClientUnavailable
@@ -379,6 +424,9 @@ func (s *gotdDownloadSession) rangeClients() ([]rangeClient, error) {
 	api, err := s.client()
 	if err != nil {
 		return nil, err
+	}
+	if _, skip := excluded[s.clientID]; skip {
+		return nil, ErrClientUnavailable
 	}
 	return []rangeClient{{api: api, clientID: s.clientID}}, nil
 }
@@ -517,13 +565,53 @@ func (r *telegramRangeReader) finish(err error) {
 }
 
 func (r *telegramRangeReader) fill(ctx context.Context, clients []rangeClient, request RangeRequest, primary *tg.InputDocumentFileLocation, remaining int64) error {
+	if len(clients) == 0 {
+		return ErrInvalidRequest
+	}
+	return r.fillWithClientSource(ctx, fixedRangeClientSource(clients), clients[0], request, primary, remaining)
+}
+
+func fixedRangeClientSource(clients []rangeClient) rangeClientSource {
+	clients = append([]rangeClient(nil), clients...)
+	return func(ctx context.Context, excluded map[int64]struct{}) ([]rangeClient, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		available := make([]rangeClient, 0, len(clients))
+		for _, client := range clients {
+			if _, skip := excluded[client.clientID]; !skip {
+				available = append(available, client)
+			}
+		}
+		if len(available) == 0 {
+			return nil, ErrClientUnavailable
+		}
+		return available, nil
+	}
+}
+
+func fillRangeWithClientSource(ctx context.Context, source rangeClientSource, primaryClient rangeClient, request RangeRequest, reader *telegramRangeReader, location *tg.InputDocumentFileLocation, documentSize int64) error {
+	if request.Offset > documentSize {
+		return io.EOF
+	}
+	remaining := request.Length
+	if remaining < 0 || request.Offset+remaining > documentSize {
+		remaining = documentSize - request.Offset
+	}
+	return reader.fillWithClientSource(ctx, source, primaryClient, request, location, remaining)
+}
+
+func (r *telegramRangeReader) fillWithClientSource(ctx context.Context, source rangeClientSource, primaryClient rangeClient, request RangeRequest, primary *tg.InputDocumentFileLocation, remaining int64) error {
 	type readResult struct {
 		seq     int64
 		payload []byte
 		err     error
 	}
-	if len(clients) == 0 {
+	if source == nil || remaining < 0 {
 		return ErrInvalidRequest
+	}
+	if remaining == 0 {
+		return nil
 	}
 
 	fetchCtx, cancel := context.WithCancel(ctx)
@@ -534,8 +622,18 @@ func (r *telegramRangeReader) fill(ctx context.Context, clients []rangeClient, r
 	var nextSeq int64
 	var emitSeq int64
 	active := 0
+	var launchErr error
 	launchNext := func() bool {
-		if nextRemaining <= 0 || nextSeq-emitSeq >= int64(r.parallel) {
+		if nextRemaining <= 0 || nextSeq-emitSeq >= int64(r.parallel) || launchErr != nil {
+			return false
+		}
+		clients, err := source(fetchCtx, nil)
+		if err != nil {
+			launchErr = err
+			return false
+		}
+		if len(clients) == 0 {
+			launchErr = ErrClientUnavailable
 			return false
 		}
 		plan := planTelegramReads(nextOffset, nextRemaining, 1)[0]
@@ -544,81 +642,21 @@ func (r *telegramRangeReader) fill(ctx context.Context, clients []rangeClient, r
 		nextOffset += int64(plan.length)
 		nextRemaining -= int64(plan.length)
 		active++
-		// Requests rotate across every leased account so one stream can use
-		// several bots at once. File references are account-bound, so the
-		// location is resolved per account from that account's cache entry.
+		// Rotate planned chunks over accounts that are ready now. Cold accounts
+		// join subsequent chunks as soon as their pooled clients become ready.
 		client := clients[seq%int64(len(clients))]
 		go func() {
-			result := readResult{seq: seq}
-			clientCtx := WithClientID(fetchCtx, client.clientID)
-			usedLocation := primary
-			if client.clientID != clients[0].clientID || client.api != clients[0].api {
-				location, _, locationErr := fetchDocumentLocation(clientCtx, client.api, request.ChannelID, request.MessageID, r.cache)
-				if locationErr != nil {
-					result.err = fmt.Errorf("resolve Telegram document for account %d: %w", client.clientID, locationErr)
-					select {
-					case completed <- result:
-					case <-fetchCtx.Done():
-					}
-					return
-				}
-				usedLocation = location
-			}
-
-			download := func(callCtx context.Context, loc *tg.InputDocumentFileLocation) (tg.UploadFileClass, error) {
-				return client.api.UploadGetFile(callCtx, &tg.UploadGetFileRequest{
-					Location: loc,
-					Offset:   plan.offset,
-					Limit:    plan.limit,
-					Precise:  true,
-				})
-			}
-
-			var response tg.UploadFileClass
-			var err error
-			chunkStarted := time.Now()
-			for range r.attempts {
-				attemptCtx, attemptCancel := context.WithTimeout(fetchCtx, r.timeout)
-				response, err = download(attemptCtx, usedLocation)
-				if _, expired := tgerr.AsType(err, "FILE_REFERENCE_EXPIRED"); expired {
-					refreshed, _, refreshErr := refreshDocumentLocation(clientCtx, client.api, request.ChannelID, request.MessageID, r.cache)
-					if refreshErr != nil {
-						err = refreshErr
-					} else if refreshed != nil {
-						usedLocation = refreshed
-						response, err = download(attemptCtx, refreshed)
-					}
-				}
-				attemptCancel()
-				if err == nil {
-					break
-				}
-				if fetchCtx.Err() != nil {
-					err = fetchCtx.Err()
-					break
-				}
-				if !errors.Is(err, context.DeadlineExceeded) && !isTransientTelegramError(err) {
-					break
-				}
-			}
-
-			if err != nil {
-				result.err = fmt.Errorf("download Telegram document chunk for account %d at %d: %w", client.clientID, plan.offset, err)
-			} else if file, ok := response.(*tg.UploadFile); !ok {
-				result.err = fmt.Errorf("unexpected Telegram download response %T", response)
-			} else if end := plan.skip + plan.length; len(file.Bytes) < end {
-				result.err = io.ErrUnexpectedEOF
-			} else {
-				result.payload = file.Bytes[plan.skip:end]
-				elapsed := time.Since(chunkStarted)
-				r.stats.record(client.clientID, int64(len(result.payload)), elapsed)
+			payload, accountID, elapsed, err := r.fetchPlan(fetchCtx, source, primaryClient, primary, request, plan, client)
+			result := readResult{seq: seq, payload: payload, err: err}
+			if err == nil {
+				r.stats.record(accountID, int64(len(payload)), elapsed)
 				if slog.Default().Enabled(ctx, slog.LevelDebug) {
 					slog.DebugContext(ctx, "telegram.download_chunk",
-						"account_id", client.clientID,
+						"account_id", accountID,
 						"offset", plan.offset,
-						"bytes", len(result.payload),
+						"bytes", len(payload),
 						"elapsed_ms", elapsed.Milliseconds(),
-						"mbps", chunkMBps(len(result.payload), elapsed),
+						"mbps", chunkMBps(len(payload), elapsed),
 					)
 				}
 			}
@@ -630,11 +668,17 @@ func (r *telegramRangeReader) fill(ctx context.Context, clients []rangeClient, r
 		return true
 	}
 
-	for active < r.parallel && launchNext() {
-	}
+	ready := make(map[int64]readResult, r.parallel)
+	for nextRemaining > 0 || active > 0 {
+		for active < r.parallel && launchNext() {
+		}
+		if active == 0 {
+			if launchErr != nil {
+				return launchErr
+			}
+			continue
+		}
 
-	ready := make(map[int64][]byte, r.parallel)
-	for active > 0 {
 		var result readResult
 		select {
 		case result = <-completed:
@@ -642,29 +686,140 @@ func (r *telegramRangeReader) fill(ctx context.Context, clients []rangeClient, r
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-		if result.err != nil {
-			return result.err
-		}
-		ready[result.seq] = result.payload
+		// Keep out-of-order errors in the same ordered window as successful
+		// chunks. A speculative read several megabytes ahead must not discard
+		// earlier chunks that are still usable by the player.
+		ready[result.seq] = result
 
 		for {
-			payload, ok := ready[emitSeq]
+			next, ok := ready[emitSeq]
 			if !ok {
 				break
 			}
+			if next.err != nil {
+				return next.err
+			}
 			select {
-			case r.buffers <- &telegramRangeBuffer{buf: payload}:
+			case r.buffers <- &telegramRangeBuffer{buf: next.payload}:
 				delete(ready, emitSeq)
 				emitSeq++
 			case <-ctx.Done():
 				return ctx.Err()
 			}
 		}
-
-		for active < r.parallel && launchNext() {
-		}
 	}
 	return nil
+}
+
+func (r *telegramRangeReader) fetchPlan(ctx context.Context, source rangeClientSource, primaryClient rangeClient, primary *tg.InputDocumentFileLocation, request RangeRequest, plan telegramReadPlan, first rangeClient) ([]byte, int64, time.Duration, error) {
+	attempted := make(map[int64]struct{})
+	var failures []error
+	client := first
+
+	for failover := 0; ; failover++ {
+		attempted[client.clientID] = struct{}{}
+		started := time.Now()
+		location := primary
+		var err error
+		if client.clientID != primaryClient.clientID || client.api != primaryClient.api {
+			location, _, err = fetchDocumentLocation(WithClientID(ctx, client.clientID), client.api, request.ChannelID, request.MessageID, r.cache)
+				if err != nil {
+					err = fmt.Errorf("resolve Telegram document for account %d: %w", client.clientID, err)
+				}
+		}
+		var payload []byte
+		if err == nil {
+			payload, err = r.fetchPlanFromClient(ctx, client, location, request, plan)
+		}
+		if err == nil {
+			return payload, client.clientID, time.Since(started), nil
+		}
+		failures = append(failures, err)
+		if ctx.Err() != nil {
+			return nil, 0, 0, errors.Join(failures...)
+		}
+		if !isRetryableTelegramChunkError(err) || failover >= defaultTelegramReadFailoverAccounts {
+			return nil, 0, 0, errors.Join(failures...)
+		}
+
+		fromAccountID := client.clientID
+		next, sourceErr := source(ctx, attempted)
+		if sourceErr != nil || len(next) == 0 {
+			if sourceErr == nil {
+				sourceErr = ErrClientUnavailable
+			}
+			return nil, 0, 0, errors.Join(append(failures, sourceErr)...)
+		}
+		client = next[0]
+		slog.WarnContext(ctx, "telegram.download_chunk_failover",
+			"offset", plan.offset,
+			"from_account_id", fromAccountID,
+			"to_account_id", client.clientID,
+			"error", err,
+		)
+	}
+}
+
+func (r *telegramRangeReader) fetchPlanFromClient(ctx context.Context, client rangeClient, location *tg.InputDocumentFileLocation, request RangeRequest, plan telegramReadPlan) ([]byte, error) {
+	clientCtx := WithClientID(ctx, client.clientID)
+	download := func(callCtx context.Context, loc *tg.InputDocumentFileLocation) (tg.UploadFileClass, error) {
+		return client.api.UploadGetFile(callCtx, &tg.UploadGetFileRequest{
+			Location: loc,
+			Offset:   plan.offset,
+			Limit:    plan.limit,
+			Precise:  true,
+		})
+	}
+
+	var response tg.UploadFileClass
+	var err error
+	for range r.attempts {
+		attemptCtx, attemptCancel := context.WithTimeout(clientCtx, r.timeout)
+		response, err = download(attemptCtx, location)
+		if _, expired := tgerr.AsType(err, "FILE_REFERENCE_EXPIRED"); expired {
+			refreshed, _, refreshErr := refreshDocumentLocation(clientCtx, client.api, request.ChannelID, request.MessageID, r.cache)
+			if refreshErr != nil {
+				err = refreshErr
+			} else if refreshed != nil {
+				location = refreshed
+				response, err = download(attemptCtx, refreshed)
+			}
+		}
+		attemptCancel()
+		if err == nil {
+			break
+		}
+		if ctx.Err() != nil {
+			err = ctx.Err()
+			break
+		}
+		if !errors.Is(err, context.DeadlineExceeded) && !isTransientTelegramError(err) {
+			break
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("download Telegram document chunk for account %d at %d: %w", client.clientID, plan.offset, err)
+	}
+	file, ok := response.(*tg.UploadFile)
+	if !ok {
+		return nil, fmt.Errorf("unexpected Telegram download response %T", response)
+	}
+	end := plan.skip + plan.length
+	if len(file.Bytes) < end {
+		return nil, fmt.Errorf("download Telegram document chunk for account %d at %d: %w", client.clientID, plan.offset, io.ErrUnexpectedEOF)
+	}
+	return file.Bytes[plan.skip:end], nil
+}
+
+func isRetryableTelegramChunkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.ErrUnexpectedEOF) || isTransientTelegramError(err) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "retryuntilack") || strings.Contains(message, "retry limit reached")
 }
 
 func chunkMBps(bytes int, elapsed time.Duration) float64 {

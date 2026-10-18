@@ -113,6 +113,18 @@ type DownloadSessionOpener interface {
 	OpenDownloadSession(context.Context, int64) (DownloadSession, error)
 }
 
+// DownloadRangeWarmer primes the preferred account's Telegram file route with a
+// tiny range before the media player requests the full stream.
+type DownloadRangeWarmer interface {
+	WarmDownloadRange(ctx context.Context, userID, accountID, channelID, messageID int64) error
+}
+
+// DownloadRangeWarmupAvailability reports whether the storage backend can warm
+// Telegram file routes in the current configuration.
+type DownloadRangeWarmupAvailability interface {
+	DownloadRangeWarmupAvailable() bool
+}
+
 type Channel struct {
 	ID   int64
 	Name string

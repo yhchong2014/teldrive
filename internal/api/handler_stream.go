@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"log/slog"
 	"net/url"
 	"strconv"
 	"strings"
@@ -63,11 +64,17 @@ func (h *Handler) CreateStreamToken(ctx context.Context, params gen.CreateStream
 		return nil, mapServiceError(err)
 	}
 	if h.Downloader != nil && accountID > 0 {
-		// Connect the client while the player is still launching.
+		// Prime the selected account's file route while the player is launching.
 		go func() {
 			warmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
-			_ = h.Downloader.WarmStream(warmCtx, access.OwnerID, accountID)
+			if err := h.Downloader.WarmStream(warmCtx, access.OwnerID, fileID, accountID); err != nil {
+				slog.WarnContext(warmCtx, "api.stream_warmup_failed",
+					"file_id", fileID,
+					"account_id", accountID,
+					"error", err,
+				)
+			}
 		}()
 	}
 	response := &gen.StreamToken{
