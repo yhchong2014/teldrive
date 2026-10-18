@@ -3,6 +3,7 @@ package telegramstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/gotd/td/bin"
@@ -72,6 +73,73 @@ func TestMigratingInvokerRetriesOnRedirectedDatacenter(t *testing.T) {
 	}
 	if len(opened) != 2 {
 		t.Fatalf("openDC() called %d times, want the datacenter pool cached", len(opened)/2)
+	}
+}
+
+func TestMigratingInvokerCachesDocumentDatacenterRoute(t *testing.T) {
+	t.Parallel()
+
+	pooled := &scriptedInvoker{errs: []error{tgerr.New(303, "FILE_MIGRATE_4")}}
+	target := &scriptedInvoker{}
+	opened := 0
+	invoker := &migratingInvoker{
+		next: pooled,
+		openDC: func(_ context.Context, dc int, _ int64) (telegram.CloseInvoker, error) {
+			if dc != 4 {
+				t.Fatalf("openDC() datacenter = %d, want 4", dc)
+			}
+			opened++
+			return target, nil
+		},
+	}
+	request := &tg.UploadGetFileRequest{Location: &tg.InputDocumentFileLocation{ID: 10, AccessHash: 20}}
+
+	for range 2 {
+		if err := invoker.Invoke(context.Background(), request, &tg.UploadFile{}); err != nil {
+			t.Fatalf("Invoke() error = %v", err)
+		}
+	}
+	if pooled.calls != 1 || target.calls != 2 || opened != 1 {
+		t.Fatalf("calls = pooled:%d target:%d openDC:%d, want 1, 2, 1", pooled.calls, target.calls, opened)
+	}
+}
+
+func TestMigratingInvokerUpdatesCachedDocumentDatacenter(t *testing.T) {
+	t.Parallel()
+
+	pooled := &scriptedInvoker{errs: []error{tgerr.New(303, "FILE_MIGRATE_4")}}
+	dc4 := &scriptedInvoker{}
+	dc5 := &scriptedInvoker{}
+	opened := make([]int, 0, 2)
+	invoker := &migratingInvoker{
+		next: pooled,
+		openDC: func(_ context.Context, dc int, _ int64) (telegram.CloseInvoker, error) {
+			opened = append(opened, dc)
+			switch dc {
+			case 4:
+				return dc4, nil
+			case 5:
+				return dc5, nil
+			default:
+				return nil, fmt.Errorf("unexpected datacenter %d", dc)
+			}
+		},
+	}
+	request := &tg.UploadGetFileRequest{Location: &tg.InputDocumentFileLocation{ID: 10, AccessHash: 20}}
+	if err := invoker.Invoke(context.Background(), request, &tg.UploadFile{}); err != nil {
+		t.Fatalf("first Invoke() error = %v", err)
+	}
+	dc4.errs = []error{tgerr.New(303, "FILE_MIGRATE_5")}
+	for range 2 {
+		if err := invoker.Invoke(context.Background(), request, &tg.UploadFile{}); err != nil {
+			t.Fatalf("Invoke() error = %v", err)
+		}
+	}
+	if pooled.calls != 1 || dc4.calls != 2 || dc5.calls != 2 {
+		t.Fatalf("calls = pooled:%d dc4:%d dc5:%d, want 1, 2, 2", pooled.calls, dc4.calls, dc5.calls)
+	}
+	if len(opened) != 2 || opened[0] != 4 || opened[1] != 5 {
+		t.Fatalf("openDC() datacenters = %v, want [4 5]", opened)
 	}
 }
 

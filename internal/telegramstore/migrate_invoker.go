@@ -29,18 +29,94 @@ var datacenterRedirects = []string{"FILE_MIGRATE", "STATS_MIGRATE"}
 // accepted the upload, so asking for it from another account - a second bot, or
 // the user account - returns FILE_MIGRATE_X and would otherwise fail the
 // request outright.
+type documentRouteKey struct {
+	id         int64
+	accessHash int64
+	thumbSize  string
+}
+
+const maxCachedDocumentRoutes = 256
+
 type migratingInvoker struct {
 	next   tg.Invoker
 	openDC func(context.Context, int, int64) (telegram.CloseInvoker, error)
 	size   int64
 
-	mu     sync.Mutex
-	dcs    map[int]telegram.CloseInvoker
-	closed bool
+	mu         sync.Mutex
+	dcs        map[int]telegram.CloseInvoker
+	routes     map[documentRouteKey]int
+	routeOrder []documentRouteKey
+	closed     bool
 }
 
 func (m *migratingInvoker) Invoke(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
+	key, hasRouteKey := getDocumentRouteKey(input)
+	if hasRouteKey {
+		if target := m.cachedDocumentDC(key); target > 0 {
+			invoker, err := m.datacenter(ctx, target)
+			if err != nil {
+				return fmt.Errorf("open cached datacenter %d: %w", target, err)
+			}
+			err = invoker.Invoke(ctx, input, output)
+			if err == nil {
+				return nil
+			}
+			newTarget, ok := redirectTarget(err)
+			if !ok || newTarget == target {
+				return err
+			}
+			return m.retryRedirect(ctx, input, output, key, true, err)
+		}
+	}
+
 	err := m.next.Invoke(ctx, input, output)
+	if err == nil {
+		return nil
+	}
+	return m.retryRedirect(ctx, input, output, key, hasRouteKey, err)
+}
+
+func getDocumentRouteKey(input bin.Encoder) (documentRouteKey, bool) {
+	request, ok := input.(*tg.UploadGetFileRequest)
+	if !ok {
+		return documentRouteKey{}, false
+	}
+	location, ok := request.Location.(*tg.InputDocumentFileLocation)
+	if !ok || location.ID == 0 || location.AccessHash == 0 {
+		return documentRouteKey{}, false
+	}
+	return documentRouteKey{id: location.ID, accessHash: location.AccessHash, thumbSize: location.ThumbSize}, true
+}
+
+func (m *migratingInvoker) cachedDocumentDC(key documentRouteKey) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.routes[key]
+}
+
+func (m *migratingInvoker) rememberDocumentDC(key documentRouteKey, dc int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return
+	}
+	if m.routes == nil {
+		m.routes = make(map[documentRouteKey]int)
+	}
+	if _, exists := m.routes[key]; exists {
+		m.routes[key] = dc
+		return
+	}
+	if len(m.routes) >= maxCachedDocumentRoutes {
+		oldest := m.routeOrder[0]
+		m.routeOrder = m.routeOrder[1:]
+		delete(m.routes, oldest)
+	}
+	m.routes[key] = dc
+	m.routeOrder = append(m.routeOrder, key)
+}
+
+func (m *migratingInvoker) retryRedirect(ctx context.Context, input bin.Encoder, output bin.Decoder, key documentRouteKey, hasRouteKey bool, err error) error {
 	// Telegram may chain redirects, so allow one retry per redirect.
 	for attempt := 0; attempt < 2; attempt++ {
 		target, ok := redirectTarget(err)
@@ -49,11 +125,17 @@ func (m *migratingInvoker) Invoke(ctx context.Context, input bin.Encoder, output
 		}
 		// Media lives in the datacenter that accepted the upload, so this is
 		// also the only place the file's actual location becomes visible.
-		// Distance to it decides per-connection throughput.
-		slog.InfoContext(ctx, "telegram.file_datacenter", "dc", target)
+		attrs := []any{"dc", target}
+		if accountID, ok := ClientID(ctx); ok {
+			attrs = append(attrs, "account_id", accountID)
+		}
+		slog.InfoContext(ctx, "telegram.file_datacenter", attrs...)
 		invoker, openErr := m.datacenter(ctx, target)
 		if openErr != nil {
 			return errors.Join(err, fmt.Errorf("open datacenter %d: %w", target, openErr))
+		}
+		if hasRouteKey {
+			m.rememberDocumentDC(key, target)
 		}
 		if err = invoker.Invoke(ctx, input, output); err == nil {
 			return nil
@@ -90,6 +172,8 @@ func (m *migratingInvoker) Close() error {
 	m.closed = true
 	dcs := m.dcs
 	m.dcs = nil
+	m.routes = nil
+	m.routeOrder = nil
 	m.mu.Unlock()
 
 	var err error

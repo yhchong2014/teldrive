@@ -49,6 +49,7 @@ download-client-idle-timeout = "30m"
 # Connect a download client when a stream token is issued.
 download-warmup = true
 download-read-buffers = 32
+# Total concurrent chunk fetches per stream; pool capacity is split across its accounts.
 download-read-parallel = 4
 # Telegram accounts (bots) that may serve one stream; 0 uses every eligible bot.
 download-bots-per-stream = 0

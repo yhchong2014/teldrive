@@ -20,6 +20,7 @@ type accountLeaserStub struct {
 	active      map[int64]int
 	leased      []int
 	connections []int
+	beforeReady func(context.Context)
 
 	runs  atomic.Int32
 	exits atomic.Int32
@@ -70,6 +71,9 @@ func (l *accountLeaseStub) RunPooled(ctx context.Context, connections int, fn fu
 	l.leaser.mu.Unlock()
 	l.leaser.runs.Add(1)
 	defer l.leaser.exits.Add(1)
+	if l.leaser.beforeReady != nil {
+		l.leaser.beforeReady(ctx)
+	}
 	return fn(WithClientID(ctx, l.account), new(tg.Client))
 }
 
@@ -204,6 +208,72 @@ func TestDownloadClientPoolKeepsOneClientPerLeasedAccount(t *testing.T) {
 	for _, session := range sessions {
 		_ = session.Close()
 	}
+	closeDownloadClientPool(t, pool)
+}
+
+func TestDownloadClientPoolDistributesConnectionPoolAcrossAccounts(t *testing.T) {
+	runner := newAccountLeaserStub(101, 102, 103)
+	pool := newTestDownloadClientPool(t, runner, DownloadClientPoolConfig{ReadParallel: 16})
+
+	session, err := pool.OpenDownloadSessionMulti(context.Background(), 9, 3, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	connections := append([]int(nil), runner.connections...)
+	runner.mu.Unlock()
+	if len(connections) != 3 {
+		t.Fatalf("pooled account count = %d, want 3", len(connections))
+	}
+	for _, got := range connections {
+		if got != 6 {
+			t.Errorf("per-account pool size = %d, want ceil(16/3)=6", got)
+		}
+	}
+	_ = session.Close()
+	closeDownloadClientPool(t, pool)
+}
+
+func TestDownloadClientPoolWarmUsesSmallPool(t *testing.T) {
+	runner := newAccountLeaserStub(101)
+	pool := newTestDownloadClientPool(t, runner, DownloadClientPoolConfig{ReadParallel: 16})
+	if err := pool.Warm(context.Background(), 9, 101); err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	connections := append([]int(nil), runner.connections...)
+	runner.mu.Unlock()
+	if len(connections) != 1 || connections[0] != 4 {
+		t.Fatalf("warm pool sizes = %v, want [4]", connections)
+	}
+	closeDownloadClientPool(t, pool)
+}
+
+func TestDownloadClientPoolStartsColdAccountsConcurrently(t *testing.T) {
+	runner := newAccountLeaserStub(101, 102, 103)
+	started := atomic.Int32{}
+	allStarted := make(chan struct{})
+	runner.beforeReady = func(ctx context.Context) {
+		if started.Add(1) == 3 {
+			close(allStarted)
+		}
+		select {
+		case <-allStarted:
+		case <-ctx.Done():
+		}
+	}
+	pool := newTestDownloadClientPool(t, runner, DownloadClientPoolConfig{ReadParallel: 6})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	session, err := pool.OpenDownloadSessionMulti(ctx, 9, 3, 0)
+	if err != nil {
+		t.Fatalf("OpenDownloadSessionMulti() = %v; all three clients should start before any is awaited", err)
+	}
+	if got := started.Load(); got != 3 {
+		t.Fatalf("cold clients started = %d, want 3", got)
+	}
+	_ = session.Close()
 	closeDownloadClientPool(t, pool)
 }
 

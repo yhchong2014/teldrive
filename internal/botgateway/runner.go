@@ -166,12 +166,130 @@ func (r *UploadAwareRunner) LeaseAccount(ctx context.Context, userID int64, oper
 	return &botLease{runner: r, userID: userID, operation: operation, bot: bot, connections: connections}, nil
 }
 
-// acquireBot reserves connections on the least-loaded eligible bot. It returns
-// nil when the operation must use the fallback runner.
-// LeasePreferredAccount leases a specific account when it is still eligible,
-// which keeps every request of one media stream on the warm client that served
-// the first one. A preferred account that is no longer eligible falls back to
-// normal least-loaded selection.
+// LeaseAccounts selects a stream's download accounts with one eligible-bot
+// query and at most one rotation-counter update. The stream's request parallelism
+// is divided across the selected accounts so each bot gets a right-sized pool.
+func (r *UploadAwareRunner) LeaseAccounts(ctx context.Context, userID int64, operation telegramstore.Operation, accountLimit, totalConnections int, preferred int64) ([]telegramstore.AccountLease, error) {
+	if r == nil || r.queries == nil || r.cipher == nil || r.factory == nil || r.fallback == nil || userID <= 0 || accountLimit < 1 || totalConnections < 1 {
+		return nil, ErrUploadRunnerConfiguration
+	}
+	if operation != telegramstore.OperationDownload {
+		return nil, fmt.Errorf("%w: multi-account leases only support downloads", ErrUploadRunnerConfiguration)
+	}
+
+	var bots []*sqlcgen.Bot
+	var err error
+	if r.downloadBots > 0 {
+		bots, err = r.queries.ListDownloadEligibleBots(ctx, sqlcgen.ListDownloadEligibleBotsParams{
+			UserID: userID, DownloadBots: int32(r.downloadBots),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list download bots: %w", err)
+		}
+	}
+	eligible := bots[:0]
+	for _, bot := range bots {
+		if bot != nil {
+			eligible = append(eligible, bot)
+		}
+	}
+	bots = eligible
+
+	remaining := downloadBotSlots(bots, userID, accountLimit, preferred)
+	var rotation uint64
+	if remaining > 0 {
+		if r.selector == nil {
+			return nil, ErrUploadRunnerConfiguration
+		}
+		selection, err := r.selector.Next(ctx, userID, operation)
+		if err != nil {
+			return nil, fmt.Errorf("select %s bots: %w", operation, err)
+		}
+		rotation = selection
+	}
+	return r.makeDownloadLeases(bots, userID, operation, accountLimit, totalConnections, preferred, rotation), nil
+}
+
+func downloadBotSlots(bots []*sqlcgen.Bot, userID int64, accountLimit int, preferred int64) int {
+	if accountLimit < 1 || len(bots) == 0 {
+		return 0
+	}
+	limit := min(accountLimit, len(bots))
+	preferredFound := false
+	for _, bot := range bots {
+		if bot != nil && bot.BotID == preferred {
+			preferredFound = true
+			break
+		}
+	}
+	if preferred == userID && !preferredFound {
+		limit = min(max(0, accountLimit-1), len(bots))
+	}
+	if preferredFound && limit > 0 {
+		limit--
+	}
+	return limit
+}
+
+func (r *UploadAwareRunner) makeDownloadLeases(bots []*sqlcgen.Bot, userID int64, operation telegramstore.Operation, accountLimit, totalConnections int, preferred int64, rotation uint64) []telegramstore.AccountLease {
+	if accountLimit < 1 {
+		accountLimit = 1
+	}
+	if totalConnections < 1 {
+		totalConnections = 1
+	}
+	preferredBot := (*sqlcgen.Bot)(nil)
+	for _, bot := range bots {
+		if bot != nil && bot.BotID == preferred {
+			preferredBot = bot
+			break
+		}
+	}
+	useFallback := len(bots) == 0 || (preferred == userID && preferredBot == nil)
+	botLimit := min(accountLimit, len(bots))
+	if useFallback {
+		botLimit = min(max(0, accountLimit-1), len(bots))
+	}
+	totalAccounts := botLimit
+	if useFallback {
+		totalAccounts++
+	}
+	if totalAccounts == 0 {
+		return []telegramstore.AccountLease{&fallbackLease{runner: r, userID: userID, operation: operation}}
+	}
+	perAccountConnections := (totalConnections + totalAccounts - 1) / totalAccounts
+	if perAccountConnections < 1 {
+		perAccountConnections = 1
+	}
+
+	leases := make([]telegramstore.AccountLease, 0, totalAccounts)
+	if useFallback {
+		leases = append(leases, &fallbackLease{runner: r, userID: userID, operation: operation})
+	}
+	remainingBots := make([]*sqlcgen.Bot, 0, len(bots))
+	for _, bot := range bots {
+		if bot == nil || bot == preferredBot {
+			continue
+		}
+		remainingBots = append(remainingBots, bot)
+	}
+	if preferredBot != nil && botLimit > 0 {
+		selected := r.load.acquireID(preferredBot, perAccountConnections)
+		leases = append(leases, &botLease{runner: r, userID: userID, operation: operation, bot: selected, connections: perAccountConnections})
+	}
+	for len(leases) < totalAccounts && len(remainingBots) > 0 {
+		bot := r.load.acquire(remainingBots, rotation+uint64(len(leases)), perAccountConnections)
+		leases = append(leases, &botLease{runner: r, userID: userID, operation: operation, bot: bot, connections: perAccountConnections})
+		for i, candidate := range remainingBots {
+			if candidate.BotID == bot.BotID {
+				remainingBots = append(remainingBots[:i], remainingBots[i+1:]...)
+				break
+			}
+		}
+	}
+	return leases
+}
+
 // DownloadAccounts lists the Telegram accounts eligible to serve a download for
 // this user, including the user account when no bot is configured.
 func (r *UploadAwareRunner) DownloadAccounts(ctx context.Context, userID int64) ([]int64, error) {
@@ -197,6 +315,10 @@ func (r *UploadAwareRunner) DownloadAccounts(ctx context.Context, userID int64) 
 	return accounts, nil
 }
 
+// LeasePreferredAccount leases a specific account when it is still eligible,
+// which keeps repeated media requests on the warm client that served the first
+// one. If it is no longer eligible, selection falls back to the least-loaded
+// account.
 func (r *UploadAwareRunner) LeasePreferredAccount(ctx context.Context, userID int64, operation telegramstore.Operation, connections int, preferred int64) (telegramstore.AccountLease, error) {
 	if preferred <= 0 {
 		return r.LeaseAccount(ctx, userID, operation, connections)
@@ -244,6 +366,8 @@ func (r *UploadAwareRunner) preferredBot(ctx context.Context, userID int64, oper
 	return nil, nil
 }
 
+// acquireBot reserves connections on the least-loaded eligible bot. It returns
+// nil when the operation should use the user's own account.
 func (r *UploadAwareRunner) acquireBot(ctx context.Context, userID int64, operation telegramstore.Operation, connections int) (*sqlcgen.Bot, error) {
 	if r == nil || r.queries == nil || r.selector == nil || r.cipher == nil || r.factory == nil || r.fallback == nil || userID <= 0 || connections < 1 {
 		return nil, ErrUploadRunnerConfiguration
@@ -435,3 +559,5 @@ var _ telegramstore.Runner = (*UploadAwareRunner)(nil)
 var _ telegramstore.PooledRunner = (*UploadAwareRunner)(nil)
 var _ telegramstore.AccountLeaser = (*UploadAwareRunner)(nil)
 var _ telegramstore.PreferredAccountLeaser = (*UploadAwareRunner)(nil)
+var _ telegramstore.MultiAccountLeaser = (*UploadAwareRunner)(nil)
+var _ telegramstore.DownloadAccountLister = (*UploadAwareRunner)(nil)
