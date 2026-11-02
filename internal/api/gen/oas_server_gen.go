@@ -210,6 +210,12 @@ type Handler interface {
 	//
 	// GET /v1/files/statistics/categories
 	GetFileCategoryStatistics(ctx context.Context) (GetFileCategoryStatisticsRes, error)
+	// GetFileThumbnail implements getFileThumbnail operation.
+	//
+	// Fetch an existing static Telegram thumbnail without saving it on the server.
+	//
+	// GET /v1/files/{fileId}/thumbnail
+	GetFileThumbnail(ctx context.Context, params GetFileThumbnailParams) (GetFileThumbnailRes, error)
 	// GetFileViewState implements getFileViewState operation.
 	//
 	// Return the authenticated user's synchronized viewer state for a file.

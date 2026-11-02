@@ -15,6 +15,12 @@ Bulk actions support copy, move, and trash. Rename/share are single-item actions
 
 Use the selection action bar or clipboard-style copy/cut/paste controls. Renaming changes catalog metadata; file payloads are not re-uploaded.
 
+## Video thumbnails
+
+List and grid views show Telegram's existing video thumbnails when available, including for videos indexed from a managed Telegram channel. Teldrive fetches the preview on demand and does not save thumbnail files on the server. Responses instruct browsers not to cache the image.
+
+Files without an accessible Telegram thumbnail use the normal icon. Encrypted files and multi-part files also use the icon, and thumbnails are not available on public-share pages.
+
 ## Download
 
 Download selected files or copy authenticated download links. Large files support HTTP range requests for seeking/streaming.

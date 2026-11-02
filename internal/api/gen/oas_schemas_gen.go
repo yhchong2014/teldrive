@@ -5103,6 +5103,249 @@ type GetFileNotFound ErrorEnvelope
 
 func (*GetFileNotFound) getFileRes() {}
 
+type GetFileThumbnailForbidden ErrorEnvelope
+
+func (*GetFileThumbnailForbidden) getFileThumbnailRes() {}
+
+type GetFileThumbnailNotFound ErrorEnvelope
+
+func (*GetFileThumbnailNotFound) getFileThumbnailRes() {}
+
+type GetFileThumbnailOKCacheControl string
+
+const (
+	GetFileThumbnailOKCacheControlPrivateNoStore GetFileThumbnailOKCacheControl = "private, no-store"
+)
+
+// AllValues returns all GetFileThumbnailOKCacheControl values.
+func (GetFileThumbnailOKCacheControl) AllValues() []GetFileThumbnailOKCacheControl {
+	return []GetFileThumbnailOKCacheControl{
+		GetFileThumbnailOKCacheControlPrivateNoStore,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s GetFileThumbnailOKCacheControl) MarshalText() ([]byte, error) {
+	switch s {
+	case GetFileThumbnailOKCacheControlPrivateNoStore:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *GetFileThumbnailOKCacheControl) UnmarshalText(data []byte) error {
+	switch GetFileThumbnailOKCacheControl(data) {
+	case GetFileThumbnailOKCacheControlPrivateNoStore:
+		*s = GetFileThumbnailOKCacheControlPrivateNoStore
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type GetFileThumbnailOKImageJpeg struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetFileThumbnailOKImageJpeg) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetFileThumbnailOKImageJpegHeaders wraps GetFileThumbnailOKImageJpeg with response headers.
+type GetFileThumbnailOKImageJpegHeaders struct {
+	CacheControl        GetFileThumbnailOKCacheControl
+	XContentTypeOptions GetFileThumbnailOKXContentTypeOptions
+	Response            GetFileThumbnailOKImageJpeg
+}
+
+// GetCacheControl returns the value of CacheControl.
+func (s *GetFileThumbnailOKImageJpegHeaders) GetCacheControl() GetFileThumbnailOKCacheControl {
+	return s.CacheControl
+}
+
+// GetXContentTypeOptions returns the value of XContentTypeOptions.
+func (s *GetFileThumbnailOKImageJpegHeaders) GetXContentTypeOptions() GetFileThumbnailOKXContentTypeOptions {
+	return s.XContentTypeOptions
+}
+
+// GetResponse returns the value of Response.
+func (s *GetFileThumbnailOKImageJpegHeaders) GetResponse() GetFileThumbnailOKImageJpeg {
+	return s.Response
+}
+
+// SetCacheControl sets the value of CacheControl.
+func (s *GetFileThumbnailOKImageJpegHeaders) SetCacheControl(val GetFileThumbnailOKCacheControl) {
+	s.CacheControl = val
+}
+
+// SetXContentTypeOptions sets the value of XContentTypeOptions.
+func (s *GetFileThumbnailOKImageJpegHeaders) SetXContentTypeOptions(val GetFileThumbnailOKXContentTypeOptions) {
+	s.XContentTypeOptions = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetFileThumbnailOKImageJpegHeaders) SetResponse(val GetFileThumbnailOKImageJpeg) {
+	s.Response = val
+}
+
+func (*GetFileThumbnailOKImageJpegHeaders) getFileThumbnailRes() {}
+
+type GetFileThumbnailOKImagePNG struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetFileThumbnailOKImagePNG) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetFileThumbnailOKImagePNGHeaders wraps GetFileThumbnailOKImagePNG with response headers.
+type GetFileThumbnailOKImagePNGHeaders struct {
+	CacheControl        GetFileThumbnailOKCacheControl
+	XContentTypeOptions GetFileThumbnailOKXContentTypeOptions
+	Response            GetFileThumbnailOKImagePNG
+}
+
+// GetCacheControl returns the value of CacheControl.
+func (s *GetFileThumbnailOKImagePNGHeaders) GetCacheControl() GetFileThumbnailOKCacheControl {
+	return s.CacheControl
+}
+
+// GetXContentTypeOptions returns the value of XContentTypeOptions.
+func (s *GetFileThumbnailOKImagePNGHeaders) GetXContentTypeOptions() GetFileThumbnailOKXContentTypeOptions {
+	return s.XContentTypeOptions
+}
+
+// GetResponse returns the value of Response.
+func (s *GetFileThumbnailOKImagePNGHeaders) GetResponse() GetFileThumbnailOKImagePNG {
+	return s.Response
+}
+
+// SetCacheControl sets the value of CacheControl.
+func (s *GetFileThumbnailOKImagePNGHeaders) SetCacheControl(val GetFileThumbnailOKCacheControl) {
+	s.CacheControl = val
+}
+
+// SetXContentTypeOptions sets the value of XContentTypeOptions.
+func (s *GetFileThumbnailOKImagePNGHeaders) SetXContentTypeOptions(val GetFileThumbnailOKXContentTypeOptions) {
+	s.XContentTypeOptions = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetFileThumbnailOKImagePNGHeaders) SetResponse(val GetFileThumbnailOKImagePNG) {
+	s.Response = val
+}
+
+func (*GetFileThumbnailOKImagePNGHeaders) getFileThumbnailRes() {}
+
+type GetFileThumbnailOKImageWEBP struct {
+	Data io.Reader
+}
+
+// Read reads data from the Data reader.
+//
+// Kept to satisfy the io.Reader interface.
+func (s GetFileThumbnailOKImageWEBP) Read(p []byte) (n int, err error) {
+	if s.Data == nil {
+		return 0, io.EOF
+	}
+	return s.Data.Read(p)
+}
+
+// GetFileThumbnailOKImageWEBPHeaders wraps GetFileThumbnailOKImageWEBP with response headers.
+type GetFileThumbnailOKImageWEBPHeaders struct {
+	CacheControl        GetFileThumbnailOKCacheControl
+	XContentTypeOptions GetFileThumbnailOKXContentTypeOptions
+	Response            GetFileThumbnailOKImageWEBP
+}
+
+// GetCacheControl returns the value of CacheControl.
+func (s *GetFileThumbnailOKImageWEBPHeaders) GetCacheControl() GetFileThumbnailOKCacheControl {
+	return s.CacheControl
+}
+
+// GetXContentTypeOptions returns the value of XContentTypeOptions.
+func (s *GetFileThumbnailOKImageWEBPHeaders) GetXContentTypeOptions() GetFileThumbnailOKXContentTypeOptions {
+	return s.XContentTypeOptions
+}
+
+// GetResponse returns the value of Response.
+func (s *GetFileThumbnailOKImageWEBPHeaders) GetResponse() GetFileThumbnailOKImageWEBP {
+	return s.Response
+}
+
+// SetCacheControl sets the value of CacheControl.
+func (s *GetFileThumbnailOKImageWEBPHeaders) SetCacheControl(val GetFileThumbnailOKCacheControl) {
+	s.CacheControl = val
+}
+
+// SetXContentTypeOptions sets the value of XContentTypeOptions.
+func (s *GetFileThumbnailOKImageWEBPHeaders) SetXContentTypeOptions(val GetFileThumbnailOKXContentTypeOptions) {
+	s.XContentTypeOptions = val
+}
+
+// SetResponse sets the value of Response.
+func (s *GetFileThumbnailOKImageWEBPHeaders) SetResponse(val GetFileThumbnailOKImageWEBP) {
+	s.Response = val
+}
+
+func (*GetFileThumbnailOKImageWEBPHeaders) getFileThumbnailRes() {}
+
+type GetFileThumbnailOKXContentTypeOptions string
+
+const (
+	GetFileThumbnailOKXContentTypeOptionsNosniff GetFileThumbnailOKXContentTypeOptions = "nosniff"
+)
+
+// AllValues returns all GetFileThumbnailOKXContentTypeOptions values.
+func (GetFileThumbnailOKXContentTypeOptions) AllValues() []GetFileThumbnailOKXContentTypeOptions {
+	return []GetFileThumbnailOKXContentTypeOptions{
+		GetFileThumbnailOKXContentTypeOptionsNosniff,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s GetFileThumbnailOKXContentTypeOptions) MarshalText() ([]byte, error) {
+	switch s {
+	case GetFileThumbnailOKXContentTypeOptionsNosniff:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *GetFileThumbnailOKXContentTypeOptions) UnmarshalText(data []byte) error {
+	switch GetFileThumbnailOKXContentTypeOptions(data) {
+	case GetFileThumbnailOKXContentTypeOptionsNosniff:
+		*s = GetFileThumbnailOKXContentTypeOptionsNosniff
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type GetFileThumbnailServiceUnavailable ErrorEnvelope
+
+func (*GetFileThumbnailServiceUnavailable) getFileThumbnailRes() {}
+
+type GetFileThumbnailUnauthorized ErrorEnvelope
+
+func (*GetFileThumbnailUnauthorized) getFileThumbnailRes() {}
+
 type GetFileUnauthorized ErrorEnvelope
 
 func (*GetFileUnauthorized) getFileRes() {}

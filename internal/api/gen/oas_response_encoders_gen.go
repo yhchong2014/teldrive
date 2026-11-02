@@ -3090,6 +3090,191 @@ func encodeGetFileCategoryStatisticsResponse(response GetFileCategoryStatisticsR
 	}
 }
 
+func encodeGetFileThumbnailResponse(response GetFileThumbnailRes, w http.ResponseWriter, span trace.Span) error {
+	switch response := response.(type) {
+	case *GetFileThumbnailOKImageJpegHeaders:
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Content-Type-Options")
+		// Encoding response headers.
+		{
+			h := uri.NewHeaderEncoder(w.Header())
+			// Encode "Cache-Control" header.
+			{
+				cfg := uri.HeaderParameterEncodingConfig{
+					Name:    "Cache-Control",
+					Explode: false,
+				}
+				if err := h.EncodeParam(cfg, func(e uri.Encoder) error {
+					return e.EncodeValue(conv.StringToString(string(response.CacheControl)))
+				}); err != nil {
+					return errors.Wrap(err, "encode Cache-Control header")
+				}
+			}
+			// Encode "X-Content-Type-Options" header.
+			{
+				cfg := uri.HeaderParameterEncodingConfig{
+					Name:    "X-Content-Type-Options",
+					Explode: false,
+				}
+				if err := h.EncodeParam(cfg, func(e uri.Encoder) error {
+					return e.EncodeValue(conv.StringToString(string(response.XContentTypeOptions)))
+				}); err != nil {
+					return errors.Wrap(err, "encode X-Content-Type-Options header")
+				}
+			}
+		}
+		w.WriteHeader(200)
+
+		writer := w
+		if closer, ok := response.Response.Data.(io.Closer); ok {
+			defer closer.Close()
+		}
+		if _, err := io.Copy(writer, response.Response); err != nil {
+			return errors.Wrap(err, "write")
+		}
+
+		return nil
+
+	case *GetFileThumbnailOKImagePNGHeaders:
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Content-Type-Options")
+		// Encoding response headers.
+		{
+			h := uri.NewHeaderEncoder(w.Header())
+			// Encode "Cache-Control" header.
+			{
+				cfg := uri.HeaderParameterEncodingConfig{
+					Name:    "Cache-Control",
+					Explode: false,
+				}
+				if err := h.EncodeParam(cfg, func(e uri.Encoder) error {
+					return e.EncodeValue(conv.StringToString(string(response.CacheControl)))
+				}); err != nil {
+					return errors.Wrap(err, "encode Cache-Control header")
+				}
+			}
+			// Encode "X-Content-Type-Options" header.
+			{
+				cfg := uri.HeaderParameterEncodingConfig{
+					Name:    "X-Content-Type-Options",
+					Explode: false,
+				}
+				if err := h.EncodeParam(cfg, func(e uri.Encoder) error {
+					return e.EncodeValue(conv.StringToString(string(response.XContentTypeOptions)))
+				}); err != nil {
+					return errors.Wrap(err, "encode X-Content-Type-Options header")
+				}
+			}
+		}
+		w.WriteHeader(200)
+
+		writer := w
+		if closer, ok := response.Response.Data.(io.Closer); ok {
+			defer closer.Close()
+		}
+		if _, err := io.Copy(writer, response.Response); err != nil {
+			return errors.Wrap(err, "write")
+		}
+
+		return nil
+
+	case *GetFileThumbnailOKImageWEBPHeaders:
+		w.Header().Set("Content-Type", "image/webp")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Content-Type-Options")
+		// Encoding response headers.
+		{
+			h := uri.NewHeaderEncoder(w.Header())
+			// Encode "Cache-Control" header.
+			{
+				cfg := uri.HeaderParameterEncodingConfig{
+					Name:    "Cache-Control",
+					Explode: false,
+				}
+				if err := h.EncodeParam(cfg, func(e uri.Encoder) error {
+					return e.EncodeValue(conv.StringToString(string(response.CacheControl)))
+				}); err != nil {
+					return errors.Wrap(err, "encode Cache-Control header")
+				}
+			}
+			// Encode "X-Content-Type-Options" header.
+			{
+				cfg := uri.HeaderParameterEncodingConfig{
+					Name:    "X-Content-Type-Options",
+					Explode: false,
+				}
+				if err := h.EncodeParam(cfg, func(e uri.Encoder) error {
+					return e.EncodeValue(conv.StringToString(string(response.XContentTypeOptions)))
+				}); err != nil {
+					return errors.Wrap(err, "encode X-Content-Type-Options header")
+				}
+			}
+		}
+		w.WriteHeader(200)
+
+		writer := w
+		if closer, ok := response.Response.Data.(io.Closer); ok {
+			defer closer.Close()
+		}
+		if _, err := io.Copy(writer, response.Response); err != nil {
+			return errors.Wrap(err, "write")
+		}
+
+		return nil
+
+	case *GetFileThumbnailUnauthorized:
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(401)
+
+		e := new(jx.Encoder)
+		response.Encode(e)
+		if _, err := e.WriteTo(w); err != nil {
+			return errors.Wrap(err, "write")
+		}
+
+		return nil
+
+	case *GetFileThumbnailForbidden:
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(403)
+
+		e := new(jx.Encoder)
+		response.Encode(e)
+		if _, err := e.WriteTo(w); err != nil {
+			return errors.Wrap(err, "write")
+		}
+
+		return nil
+
+	case *GetFileThumbnailNotFound:
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(404)
+
+		e := new(jx.Encoder)
+		response.Encode(e)
+		if _, err := e.WriteTo(w); err != nil {
+			return errors.Wrap(err, "write")
+		}
+
+		return nil
+
+	case *GetFileThumbnailServiceUnavailable:
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(503)
+		span.SetStatus(codes.Error, http.StatusText(503))
+
+		e := new(jx.Encoder)
+		response.Encode(e)
+		if _, err := e.WriteTo(w); err != nil {
+			return errors.Wrap(err, "write")
+		}
+
+		return nil
+
+	default:
+		return errors.Errorf("unexpected response type: %T", response)
+	}
+}
+
 func encodeGetFileViewStateResponse(response GetFileViewStateRes, w http.ResponseWriter, span trace.Span) error {
 	switch response := response.(type) {
 	case *FileViewState:

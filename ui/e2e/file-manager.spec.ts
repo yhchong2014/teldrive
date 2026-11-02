@@ -46,6 +46,54 @@ test("sorting hydrates before the first request and URL overrides saved preferen
   expect(requests[0].searchParams.get("order")).toBe("asc");
 });
 
+test("video thumbnails use Telegram previews and fall back to icons", async ({ page }) => {
+  await installFileApi(page);
+  const previewID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const missingID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const encryptedID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  await page.route(/\/api\/v1\/files(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      json: {
+        items: [
+          file({ id: previewID, name: "preview.mp4", kind: "file", mimeType: "video/mp4" }),
+          file({ id: missingID, name: "missing.mp4", kind: "file", mimeType: "video/mp4" }),
+          file({
+            id: encryptedID,
+            name: "private.mp4",
+            kind: "file",
+            mimeType: "video/mp4",
+            encryption: true,
+          }),
+        ],
+      },
+    });
+  });
+  let encryptedRequests = 0;
+  await page.route("**/api/v1/files/*/thumbnail**", async (route) => {
+    const url = route.request().url();
+    if (url.includes(encryptedID)) encryptedRequests++;
+    if (url.includes(previewID)) {
+      return route.fulfill({
+        contentType: "image/png",
+        body: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+nm1QAAAAASUVORK5CYII=",
+          "base64",
+        ),
+      });
+    }
+    return route.fulfill({ status: 404 });
+  });
+  await page.goto("/files?view=list");
+  const preview = page.getByRole("row", { name: /preview\.mp4/ });
+  const missing = page.getByRole("row", { name: /missing\.mp4/ });
+  const encrypted = page.getByRole("row", { name: /private\.mp4/ });
+  await expect(preview.locator("img")).toBeVisible();
+  await expect(missing.locator("img")).toHaveCount(0);
+  await expect(missing.locator("svg").last()).toBeVisible();
+  await expect(encrypted.locator("img")).toHaveCount(0);
+  expect(encryptedRequests).toBe(0);
+});
+
 type FixtureFile = {
   id: string;
   parentId?: string;

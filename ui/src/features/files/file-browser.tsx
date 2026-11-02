@@ -1,5 +1,5 @@
 import { Button, Card, Checkbox, Spinner } from "@heroui/react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Collection,
   GridLayout,
@@ -19,11 +19,13 @@ import FolderIcon from "~icons/gravity-ui/folder";
 import GridIcon from "~icons/gravity-ui/layout-cells";
 import ListIcon from "~icons/gravity-ui/list-ul";
 import { FileTypeIcon } from "./file-type-icon";
+import { previewMedia } from "./preview-support";
 
 export type FileBrowserView = "list" | "grid";
 
 type FileBrowserProps = {
   files: FileEntry[];
+  showThumbnails?: boolean;
   path: string;
   rootLabel: string;
   view: FileBrowserView;
@@ -54,6 +56,7 @@ type FileBrowserProps = {
 
 export function FileBrowser({
   files,
+  showThumbnails = true,
   path,
   rootLabel,
   view,
@@ -152,6 +155,7 @@ export function FileBrowser({
           <div className="h-full min-h-0">
             <FileCollection
               files={files}
+              showThumbnails={showThumbnails}
               view={view}
               selection={selection}
               selectionDisabled={selectionDisabled}
@@ -175,6 +179,7 @@ export function FileBrowser({
 
 function FileCollection({
   files,
+  showThumbnails,
   view,
   selection,
   selectionDisabled,
@@ -190,6 +195,7 @@ function FileCollection({
   onOpenContainingFolder,
 }: {
   files: FileEntry[];
+  showThumbnails: boolean;
   view: FileBrowserView;
   selection?: FileBrowserProps["selection"];
   selectionDisabled: boolean;
@@ -277,6 +283,7 @@ function FileCollection({
                 grid ? (
                   <GridFile
                     file={file}
+                    showThumbnails={showThumbnails}
                     selectable={Boolean(selection)}
                     showCheckbox={state.isHovered || state.isFocusVisible || state.isSelected}
                     location={showLocations ? file.parentPath : undefined}
@@ -287,6 +294,7 @@ function FileCollection({
                 ) : (
                   <ListFile
                     file={file}
+                    showThumbnails={showThumbnails}
                     selectable={Boolean(selection)}
                     showCheckbox={state.isHovered || state.isFocusVisible || state.isSelected}
                     location={showLocations ? file.parentPath : undefined}
@@ -337,12 +345,14 @@ function SelectionCheckbox({ file, isVisible }: { file: FileEntry; isVisible: bo
 
 function GridFile({
   file,
+  showThumbnails,
   selectable,
   showCheckbox,
   location,
   onOpenContainingFolder,
 }: {
   file: FileEntry;
+  showThumbnails: boolean;
   selectable: boolean;
   showCheckbox: boolean;
   location?: string;
@@ -354,11 +364,26 @@ function GridFile({
     <>
       <div className="flex items-start gap-2">
         {selectable ? <SelectionCheckbox file={file} isVisible={showCheckbox} /> : null}
-        <div className="flex size-11 items-center justify-center rounded-xl bg-accent/10 text-accent">
+        <div
+          className={[
+            "flex shrink-0 items-center justify-center overflow-hidden rounded-xl bg-accent/10 text-accent",
+            showThumbnails &&
+            file.kind === "file" &&
+            !file.encryption &&
+            previewMedia(file)?.kind === "video"
+              ? "h-16 w-24"
+              : "size-11",
+          ].join(" ")}
+        >
           {file.kind === "folder" ? (
             <FolderIcon className="size-5" />
           ) : (
-            <FileTypeIcon file={file} className="size-5" />
+            <FileThumbnail
+              key={`${file.id}-${file.generation}`}
+              file={file}
+              enabled={showThumbnails}
+              iconClassName="size-5"
+            />
           )}
         </div>
       </div>
@@ -369,7 +394,9 @@ function GridFile({
         )}
         <p className="mt-1 text-[11px] text-muted">
           {file.kind === "folder"
-            ? (file.size != null ? formatBytes(file.size) : t("browser.folderKind"))
+            ? file.size != null
+              ? formatBytes(file.size)
+              : t("browser.folderKind")
             : formatBytes(file.size ?? 0)}
         </p>
       </div>
@@ -379,12 +406,14 @@ function GridFile({
 
 function ListFile({
   file,
+  showThumbnails,
   selectable,
   showCheckbox,
   location,
   onOpenContainingFolder,
 }: {
   file: FileEntry;
+  showThumbnails: boolean;
   selectable: boolean;
   showCheckbox: boolean;
   location?: string;
@@ -401,7 +430,12 @@ function ListFile({
           {file.kind === "folder" ? (
             <FolderIcon className="size-4" />
           ) : (
-            <FileTypeIcon file={file} className="size-4" />
+            <FileThumbnail
+              key={`${file.id}-${file.generation}`}
+              file={file}
+              enabled={showThumbnails}
+              iconClassName="size-4"
+            />
           )}
         </div>
         <div className="min-w-0">
@@ -422,7 +456,9 @@ function ListFile({
       </div>
       <span className="hidden text-xs text-muted sm:block">
         {file.kind === "folder"
-          ? (file.size != null ? formatBytes(file.size) : t("browser.folderKind"))
+          ? file.size != null
+            ? formatBytes(file.size)
+            : t("browser.folderKind")
           : formatBytes(file.size ?? 0)}
       </span>
       <span className="hidden min-w-0 text-xs text-muted lg:block">
@@ -520,5 +556,36 @@ function FileBrowserBreadcrumb({
         );
       })}
     </nav>
+  );
+}
+
+// The endpoint reads Telegram's existing preview; missing previews keep the
+// ordinary icon. Public-share pages do not have access to this private API.
+function FileThumbnail({
+  file,
+  enabled,
+  iconClassName,
+}: {
+  file: FileEntry;
+  enabled: boolean;
+  iconClassName: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const canPreview =
+    enabled &&
+    !failed &&
+    !file.encryption &&
+    file.status === "active" &&
+    previewMedia(file)?.kind === "video";
+  if (!canPreview) return <FileTypeIcon file={file} className={iconClassName} />;
+  return (
+    <img
+      src={`/api/v1/files/${encodeURIComponent(file.id)}/thumbnail?v=${encodeURIComponent(file.generation)}`}
+      alt=""
+      aria-hidden="true"
+      loading="lazy"
+      className="size-full rounded-lg object-cover"
+      onError={() => setFailed(true)}
+    />
   );
 }
