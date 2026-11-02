@@ -181,6 +181,10 @@ type GetFileRes interface {
 	getFileRes()
 }
 
+type GetFileThumbnailRes interface {
+	getFileThumbnailRes()
+}
+
 type GetFileViewStateRes interface {
 	getFileViewStateRes()
 }

@@ -54,6 +54,7 @@ type GotdStorage struct {
 	downloadReadBuffers  int
 	downloadReadParallel int
 	globalCache          cache.Cacher
+	thumbnailSlots       chan struct{}
 }
 
 type GotdStorageOption func(*GotdStorage)
@@ -83,7 +84,7 @@ func WithDownloadReadParallel(parallel int) GotdStorageOption {
 }
 
 func NewGotdStorage(runner Runner, c cache.Cacher, options ...GotdStorageOption) *GotdStorage {
-	storage := &GotdStorage{runner: runner, globalCache: c, downloadReadBuffers: defaultTelegramReadBuffers, downloadReadParallel: defaultTelegramReadParallel}
+	storage := &GotdStorage{runner: runner, globalCache: c, downloadReadBuffers: defaultTelegramReadBuffers, downloadReadParallel: defaultTelegramReadParallel, thumbnailSlots: make(chan struct{}, 4)}
 	for _, option := range options {
 		if option != nil {
 			option(storage)
@@ -723,9 +724,9 @@ func (r *telegramRangeReader) fetchPlan(ctx context.Context, source rangeClientS
 		var err error
 		if client.clientID != primaryClient.clientID || client.api != primaryClient.api {
 			location, _, err = fetchDocumentLocation(WithClientID(ctx, client.clientID), client.api, request.ChannelID, request.MessageID, r.cache)
-				if err != nil {
-					err = fmt.Errorf("resolve Telegram document for account %d: %w", client.clientID, err)
-				}
+			if err != nil {
+				err = fmt.Errorf("resolve Telegram document for account %d: %w", client.clientID, err)
+			}
 		}
 		var payload []byte
 		if err == nil {

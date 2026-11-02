@@ -1785,6 +1785,126 @@ func (s GetFileCategoryStatisticsOKApplicationJSON) Validate() error {
 	return nil
 }
 
+func (s GetFileThumbnailOKCacheControl) Validate() error {
+	switch s {
+	case "private, no-store":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
+func (s *GetFileThumbnailOKImageJpegHeaders) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.CacheControl.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "CacheControl",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if err := s.XContentTypeOptions.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "XContentTypeOptions",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s *GetFileThumbnailOKImagePNGHeaders) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.CacheControl.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "CacheControl",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if err := s.XContentTypeOptions.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "XContentTypeOptions",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s *GetFileThumbnailOKImageWEBPHeaders) Validate() error {
+	if s == nil {
+		return validate.ErrNilPointer
+	}
+
+	var failures []validate.FieldError
+	if err := func() error {
+		if err := s.CacheControl.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "CacheControl",
+			Error: err,
+		})
+	}
+	if err := func() error {
+		if err := s.XContentTypeOptions.Validate(); err != nil {
+			return err
+		}
+		return nil
+	}(); err != nil {
+		failures = append(failures, validate.FieldError{
+			Name:  "XContentTypeOptions",
+			Error: err,
+		})
+	}
+	if len(failures) > 0 {
+		return &validate.Error{Fields: failures}
+	}
+	return nil
+}
+
+func (s GetFileThumbnailOKXContentTypeOptions) Validate() error {
+	switch s {
+	case "nosniff":
+		return nil
+	default:
+		return errors.Errorf("invalid value: %v", s)
+	}
+}
+
 func (s GetUploadStatisticsOKApplicationJSON) Validate() error {
 	alias := ([]UploadDailyStatistics)(s)
 	if alias == nil {

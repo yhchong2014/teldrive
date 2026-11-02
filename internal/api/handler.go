@@ -35,6 +35,7 @@ type Handler struct {
 	FileOps                    *fileops.Service
 	Shares                     *shares.Service
 	TelegramAccount            telegramstore.Account
+	Thumbnails                 telegramstore.ThumbnailReader
 	StreamTokens               *streamtoken.Signer
 	DownloadAccounts           DownloadAccountSource
 	WebDAVCredentials          WebDAVCredentialStore

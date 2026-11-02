@@ -219,6 +219,9 @@ func New(ctx context.Context, cfg config.Config, dependencies Dependencies) (*Ap
 	).ConfigureDomains(authService, botService, channelService, fileService, shareService, telegramAccount).
 		ConfigureJobs(jobRuntime)
 	handler.StreamTokens = streamTokens
+	if thumbnails, ok := storage.(telegramstore.ThumbnailReader); ok {
+		handler.Thumbnails = thumbnails
+	}
 	if telegram.downloadAccounts != nil {
 		handler.DownloadAccounts = telegram.downloadAccounts
 	}

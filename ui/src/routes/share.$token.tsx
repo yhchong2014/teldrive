@@ -391,6 +391,7 @@ function PublicSharePage() {
                   </div>
                 ) : null}
                 <FileBrowser
+                  showThumbnails={false}
                   files={items}
                   path={path}
                   rootLabel={share.file.name}

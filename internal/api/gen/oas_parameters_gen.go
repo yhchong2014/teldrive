@@ -4616,6 +4616,78 @@ func decodeGetFileParams(args [1]string, argsEscaped bool, r *http.Request) (par
 	return params, nil
 }
 
+// GetFileThumbnailParams is parameters of getFileThumbnail operation.
+type GetFileThumbnailParams struct {
+	FileId UUID
+}
+
+func unpackGetFileThumbnailParams(packed middleware.Parameters) (params GetFileThumbnailParams) {
+	{
+		key := middleware.ParameterKey{
+			Name: "fileId",
+			In:   "path",
+		}
+		params.FileId = packed[key].(UUID)
+	}
+	return params
+}
+
+func decodeGetFileThumbnailParams(args [1]string, argsEscaped bool, r *http.Request) (params GetFileThumbnailParams, _ error) {
+	// Decode path: fileId.
+	if err := func() error {
+		param := args[0]
+		if argsEscaped {
+			unescaped, err := url.PathUnescape(args[0])
+			if err != nil {
+				return errors.Wrap(err, "unescape path")
+			}
+			param = unescaped
+		}
+		if len(param) > 0 {
+			d := uri.NewPathDecoder(uri.PathDecoderConfig{
+				Param:   "fileId",
+				Value:   param,
+				Style:   uri.PathStyleSimple,
+				Explode: false,
+			})
+
+			if err := func() error {
+				var paramsDotFileIdVal uuid.UUID
+				if err := func() error {
+					val, err := d.DecodeValue()
+					if err != nil {
+						return err
+					}
+
+					c, err := conv.ToUUID(val)
+					if err != nil {
+						return err
+					}
+
+					paramsDotFileIdVal = c
+					return nil
+				}(); err != nil {
+					return err
+				}
+				params.FileId = UUID(paramsDotFileIdVal)
+				return nil
+			}(); err != nil {
+				return err
+			}
+		} else {
+			return validate.ErrFieldRequired
+		}
+		return nil
+	}(); err != nil {
+		return params, &ogenerrors.DecodeParamError{
+			Name: "fileId",
+			In:   "path",
+			Err:  err,
+		}
+	}
+	return params, nil
+}
+
 // GetFileViewStateParams is parameters of getFileViewState operation.
 type GetFileViewStateParams struct {
 	FileId UUID

@@ -281,6 +281,23 @@ model StreamToken {
   accountId?: int64;
 }
 
+model FileThumbnailResponse {
+  @statusCode
+  statusCode: 200;
+
+  @header("Content-Type")
+  contentType: "image/jpeg" | "image/png" | "image/webp";
+
+  @header("Cache-Control")
+  cacheControl: "private, no-store";
+
+  @header("X-Content-Type-Options")
+  contentTypeOptions: "nosniff";
+
+  @body
+  body: bytes;
+}
+
 model FileContentResponse {
   @statusCode
   statusCode: 200;
@@ -473,6 +490,17 @@ namespace Files {
   @route("/trash")
   @operationId("cleanTrash")
   op cleanTrash(): EmptyResponse<204> | ErrorResponse<401>;
+
+  /** Fetch an existing static Telegram thumbnail without saving it on the server. */
+  @get
+  @route("/{fileId}/thumbnail")
+  @operationId("getFileThumbnail")
+  op thumbnail(@path fileId: Uuid):
+    | FileThumbnailResponse
+    | ErrorResponse<401>
+    | ErrorResponse<403>
+    | ErrorResponse<404>
+    | ErrorResponse<503>;
 
   /** Stream complete or partial file content. The filename path segment gives command-line clients a useful output name. */
   @get

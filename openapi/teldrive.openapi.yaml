@@ -2175,6 +2175,76 @@ paths:
         - BearerAuth: []
         - CookieAuth: []
         - ExternalApiKeyAuth: []
+  /v1/files/{fileId}/thumbnail:
+    get:
+      operationId: getFileThumbnail
+      description: Fetch an existing static Telegram thumbnail without saving it on
+        the server.
+      parameters:
+        - name: fileId
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Uuid"
+      responses:
+        "200":
+          description: The request has succeeded.
+          headers:
+            Cache-Control:
+              required: true
+              schema:
+                type: string
+                enum:
+                  - private, no-store
+            X-Content-Type-Options:
+              required: true
+              schema:
+                type: string
+                enum:
+                  - nosniff
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        "401":
+          description: Access is unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: Access is forbidden.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Service unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+      tags:
+        - Files
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+        - ExternalApiKeyAuth: []
   /v1/files/{fileId}/content/{fileName}:
     get:
       operationId: downloadFile

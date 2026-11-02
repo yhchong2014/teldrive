@@ -51,6 +51,7 @@ const (
 	GetDriveStatisticsOperation                OperationName = "GetDriveStatistics"
 	GetFileOperation                           OperationName = "GetFile"
 	GetFileCategoryStatisticsOperation         OperationName = "GetFileCategoryStatistics"
+	GetFileThumbnailOperation                  OperationName = "GetFileThumbnail"
 	GetFileViewStateOperation                  OperationName = "GetFileViewState"
 	GetJobOperation                            OperationName = "GetJob"
 	GetJobStatisticsOperation                  OperationName = "GetJobStatistics"
