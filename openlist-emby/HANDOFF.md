@@ -1,214 +1,363 @@
-# HANDOFF — OpenList ⇄ Emby work (continue in a fresh chat)
+# HANDOFF — OpenList ⇄ Emby work (instructions only)
 
-You are picking up work done in a previous chat. Everything needed to continue
-without that chat's context is below. Work through it in order.
+You are picking up work done in a previous chat. This document is
+**instructions only — there is deliberately no code in this repo.** Build the
+code yourself following the specs below.
 
-The repo is `yhchong2014/teldrive`. The artifacts live in `openlist-emby/` at the
-repo root — they are committed alongside this file, so a fresh clone has them.
+**Owner's constraint: do not commit code, patches, or scripts to this fork
+(`yhchong2014/teldrive`).** If you produce code, keep it in `/tmp` or a scratch
+directory, or deliver it in chat. Only this document lives here.
 
----
-
-## 0. Background: what the previous session established
-
-The user runs **Teldrive** (this repo) as storage and **OpenList** as the front
-end, with **Emby-compatible clients** (Infuse, VidHub, etc.) connecting to
-OpenList's `/@emby` endpoint. They asked a series of questions that turned into
-real findings, then into two deliverables.
-
-Established facts — do not re-derive these, they are verified against source:
-
-- OpenList's Emby API is at `/@emby` (also `/@mediabrowser`); reported version
-  `4.10.0.5`. Both `media_enabled` and `media_emby_enabled` settings default to
-  **off** (endpoints 404 until enabled).
-- Emby `DateCreated` comes from `media_items.created_at` — **when the scanner
-  first indexed the file**, not the file's date and not its release date.
-  `PremiereDate` comes from `media_items.release_date`.
-- OpenList's `sortEmbyItems()` supports exactly: `SortName`, `Name`,
-  `SeriesSortName`, `DateCreated`, `DatePlayed`, `ProductionYear`,
-  `ParentIndexNumber`, `IndexNumber`, `CommunityRating`.
-  **There is no `PremiereDate`/`ReleaseDate` sort key** — a client asking for it
-  silently gets no sorting at all. This is why "Release Date" sorting is broken
-  out of the box and why deliverable 1 works by rewriting `created_at`.
-- `UpdateMediaItemReq` has **no date field**; the admin UI cannot edit date added.
-- `SortName` is set to a verbatim copy of `Name` at all four DTO constructors.
-  `ForcedSortName` is declared in the DTO but **never assigned anywhere**.
-- Watch state (`played`, `play_count`, `is_favorite`, `position_ticks`) lives in
-  `media_user_data`, per `(user_id, item_id, episode_index)`. It works, but:
-  - `MediaItem.Duration` is **never assigned** anywhere in the codebase, so the
-    `ratio >= 0.9` auto-mark-watched in `embySaveProgress`/`embySessionPlaying`
-    never fires. Emby playback never auto-marks a movie watched.
-  - `seriesItem()` hardcodes `UserData: &embyUserData{}` — no watched badge on
-    series.
-  - `DeleteMediaItem` / `ClearMediaItems` delete `media_annotations` but **not**
-    `media_user_data` — orphaned watch state after a wipe.
-- StrmAssistant (the Emby plugin) **cannot** be used with OpenList. It is a
-  server-side plugin that injects `ILibraryManager`, `IProviderManager`,
-  `IFileSystem` inside the Emby process; it never calls a remote Emby API.
-  OpenList also has no plugin/hook system (the `plugin` branch is WASM *storage
-  drivers* only).
-- OpenList's Emby search is one line: case-insensitive `strings.Contains` on the
-  display name only. No pinyin, no traditional/simplified, no fuzzy, no
-  alternate titles (`OriginalTitle` is declared and never assigned; there is no
-  alternate-title column at all).
+Context: the owner uses **Teldrive** (this repo) as storage, **OpenList** as the
+front end, and **Emby-compatible clients** (Infuse, VidHub, MoviePilot) pointed at
+OpenList's `/@emby` endpoint. They want OpenList's Emby surface to behave more
+like a real Emby — specifically **date added**, **拼音首字母排序**, and later
+**Chinese search**.
 
 ---
 
-## 1. What already exists in `openlist-emby/`
+## 1. Verified facts — do NOT re-derive these
 
-| file | status | what it is |
+These were checked against OpenList source (v4.2.8 and `main`). Trust them and
+spend your time on the work instead.
+
+### Emby API surface
+- Endpoint: `/@emby` (also `/@mediabrowser`), reported version `4.10.0.5`.
+- Gated by two settings, **both default off**: `media_enabled` and
+  `media_emby_enabled`. Endpoints return 404 while off.
+- Auth: `POST /Users/AuthenticateByName`, or an app key used as `api_key` /
+  `X-Emby-Token`.
+- Playback: `PlaybackInfo` → `302` to a signed link.
+  `SupportsTranscoding: false` — **no transcoding**.
+- Missing/unimplemented: no subtitle streams (only lyrics-as-subtitle for songs),
+  `DateLastMediaAdded` declared but never assigned, no `UserDataChanged` push
+  (WebSocket is keep-alive only).
+
+### Date added
+- Emby `DateCreated` ← `media_items.created_at` — **when the scanner first
+  indexed the file**. Not the file mtime, not the release date.
+- `PremiereDate` ← `media_items.release_date`.
+- `UpdateMediaItemReq` has **no date field**. The admin UI cannot edit it.
+- The scanner never reads `ModTime()` — `buildMediaItemFromVFS` records only
+  name, size, MIME.
+- Rescans **preserve** `created_at` (`item.CreatedAt = existing.CreatedAt`), so
+  edits survive rescans. Hard delete + rescan assigns a fresh timestamp.
+
+### Sorting — the critical finding
+`sortEmbyItems()` supports exactly these keys:
+
+```
+SortName · Name · SeriesSortName · DateCreated · DatePlayed
+ProductionYear · ParentIndexNumber · IndexNumber · CommunityRating
+```
+
+**There is no `PremiereDate` / `ReleaseDate` key.** A client sending
+`SortBy=PremiereDate` matches no case, `cmp()` returns 0 for every pair, and the
+sort becomes a no-op — items come back in assembly order, which looks random.
+This is why "Release Date" sorting appears broken, and why the date fix works by
+moving the release date **into** `created_at`.
+
+Also: at all four DTO constructors (`movieItem`, `seriesItem`, `albumItem`,
+`songItem`) `SortName` is a **verbatim copy of `Name`**. `ForcedSortName` is
+declared in the DTO but **never assigned anywhere** in the codebase — a free,
+unused hook.
+
+### Watch state
+Stored in `media_user_data`, keyed `(user_id, item_id, episode_index)` with
+`played`, `play_count`, `is_favorite`, `position_ticks`, `last_played_at`.
+Works, but:
+- `MediaItem.Duration` is **never assigned** anywhere ⇒ the
+  `ratio >= 0.9` auto-mark-watched never fires. Emby playback never auto-marks a
+  movie watched; only manual "mark played" increments `PlayCount`.
+- `seriesItem()` hardcodes `UserData: &embyUserData{}` ⇒ no watched badge on
+  series (seasons get `UnplayedItemCount`, episodes get `Played`).
+- `DeleteMediaItem` / `ClearMediaItems` / `DeleteMediaItemsByIDs` delete
+  `media_annotations` but **not** `media_user_data` ⇒ orphaned watch state.
+- `ClearMediaUserDataByUser` exists in the DB layer but is never called.
+
+### Search
+- One line, case-insensitive `strings.Contains` on the **display name only**.
+  Two call sites: `filterEmbyItems()` and `embySearchHints()`.
+- No pinyin, no traditional↔simplified, no fuzzy, no alternate titles.
+  `OriginalTitle` is declared and never assigned; there is **no**
+  alternate-title column at all. The TMDB scraper doesn't even fetch
+  `original_title`.
+- OpenList's own Bleve index sets no CJK analyzer either.
+
+### StrmAssistant cannot be used
+`sjtuross/StrmAssistant` is a **server-side** Emby plugin. Its constructor
+injects `ILibraryManager`, `IProviderManager`, `IFileSystem`, `ITaskManager` and
+runs **in-process**; it never calls a remote Emby API, so there is nothing to
+point at OpenList. It also targets `mediabrowser.server.core` 4.8.0.80,
+`netstandard2.1`, min Emby 4.8.5. Its `main` is a "Lite" build
+(`AssemblyName` = `StrmAssistantLite`) that ships the resource strings for the
+Chinese options but not the code. OpenList additionally has **no plugin/hook
+system** — the `plugin` branch is WASM **storage drivers** only (13 ahead /
+401 behind `main`). Conclusion: any Chinese-search or pinyin feature must be
+implemented **inside OpenList**.
+
+---
+
+## 2. Deliverable A — Date added = release date
+
+**Goal:** make Emby clients sort movies by true release date.
+
+**Method:** rewrite `media_items.created_at` from `media_items.release_date` in
+OpenList's own database. This is a local DB edit, not a feature — there is no UI
+or API field, so direct SQL is the only route.
+
+### Build this as a script (keep it out of the repo)
+
+Requirements:
+- Default to **dry run**; require an explicit `--apply` to write.
+- On `--apply`, copy a timestamped `.bak` of the sqlite file first.
+- Default target: sqlite at `<data-dir>/data.db`, table prefix `x_`
+  (both configurable). Docker data volume is `/opt/openlist/data/`.
+- Also support MySQL and Postgres via `--backend` + `--dsn`.
+- Filter: `deleted_at IS NULL`; skip hidden unless asked; default media type
+  `video`, allow `music` / `image` / `book` / `all`.
+- Skip rows with no `release_date`, list them at the end, and offer a
+  `--fallback YYYY-MM-DD` for them.
+- **Idempotent** — re-runs must report "already correct" rather than rewriting.
+
+### Non-obvious constraints — get these exactly right
+
+1. **Timestamp format.** OpenList's sqlite driver is `glebarez/sqlite`. It parses
+   with `parseTimeFormats[0] = "2006-01-02 15:04:05.999999999-07:00"` and writes
+   time.Time with that same layout. Write the value as
+   `YYYY-MM-DD HH:MM:SS+00:00` (e.g. `2009-11-13 12:00:00+00:00`). Do **not**
+   use the ISO `T` form.
+2. **Store noon UTC, not midnight.** `embyTimeStr()` formats with `.UTC()`, so a
+   midnight timestamp can slip back one calendar day for negative UTC offsets.
+   Noon can never cross a day boundary in any timezone (−12…+14).
+3. **Never touch `updated_at`.** OpenList uses it for Subsonic's `Starred` field.
+   Also, MySQL evaluates `SET` clauses left-to-right, so
+   `SET created_at=?, updated_at=created_at` would copy the *new* value — if you
+   ever do set both, MySQL needs `updated_at` assigned first.
+4. Normalise input dates: accept `YYYY-MM-DD`, `YYYY/MM/DD`,
+   `YYYY-MM-DDTHH:MM:SSZ`, and a bare 4-digit year.
+
+### Usage shape to document for the owner
+
+```
+stop OpenList → dry run → review → --apply → start OpenList
+→ POST /Library/Refresh (or client "Refresh metadata")
+→ sort by "Release Date" in the client
+```
+
+### Tell the owner these three caveats
+
+- **TV episodes have no release date of their own.** `PremiereDate` is emitted
+  only by `movieItem()`. Episodes inherit the single merged show record's
+  `DateCreated`, so running this on a TV library stamps every episode with the
+  show's date. Harmless — in-series order comes from
+  `ParentIndexNumber`/`IndexNumber` — but they should know.
+- **Date Added and Release Date become identical**, so "Recently Added" stops
+  meaning anything. It's one or the other, because `DateCreated` is the only
+  date OpenList exposes for client-side sorting.
+- Survives normal rescans; **not** a full library wipe + rescan.
+
+---
+
+## 3. Deliverable B — 拼音首字母排序
+
+**Goal:** Emby clients sort Chinese titles by pinyin instead of Unicode codepoint.
+**No client change should be needed** — clients already sort by `SortName`.
+
+### The bug
+
+`SortName = Name` verbatim at all four DTO sites; `sortEmbyItems` compares them
+as plain strings. CJK codepoints are ordered radical-and-stroke, so Chinese
+libraries come out in a meaningless order. Mixed libraries are worse: ASCII
+codepoints are lower, so **every Chinese title sorts after every English one**.
+That symptom is what users notice most:
+
+```
+before                    after
+Alien                     Alien      (ALIEN)
+Dune                      Dune       (DUNE)
+Interstellar              Interstellar
+战狼                      霸王别姬     (BWBJ)
+流浪地球                   重庆森林     (CQSL)
+霸王别姬                   流浪地球     (LLDQ)
+                          战狼        (ZL)
+```
+
+### The change
+
+1. **New file** in `server/handles/` (suggest `pinyin.go`) exposing one helper,
+   e.g. `pinyinSortName(name string) string`.
+2. **Patch 4 sites** in `server/handles/emby_browse.go` — `movieItem`,
+   `seriesItem`, `albumItem`, `songItem` — setting **both**
+   `SortName: pinyinSortName(name)` and `ForcedSortName: pinyinSortName(name)`.
+   Setting `ForcedSortName` matters: Emby ranks it above `SortName`, and
+   OpenList never sends it.
+3. **Dependency:** `github.com/mozillazg/go-pinyin`.
+4. **Tests:** a table test in `pinyin_test.go` (cases in §3.3).
+
+### 3.1 Behaviour spec
+
+- Pure-ASCII / digit-only titles → **return unchanged**. No uppercasing, no
+  rewriting, and skip the cache. Keeps the patch a no-op for non-Chinese
+  libraries.
+- Titles containing Han characters → convert the **Han characters only** to
+  pinyin initials, uppercase. Non-Han characters are preserved as-is.
+- Mixed titles keep the Latin prefix and file under it:
+  `Dune 沙丘` → `DUNE SQ`, not `SQ`.
+- Episodes and seasons keep numeric `SortName` (`S01E02`) — they must stay in
+  episode order, not alphabetical. Do not touch those constructors.
+- Cache per title in a `sync.Map`. `loadEmbyLibrary` rebuilds the whole library
+  on every request and the same series/album names recur across DTOs.
+
+### 3.2 Two traps that will bite you
+
+**`go-pinyin` silently drops unknown runes.** `Pinyin()` only appends a rune when
+it has a dictionary entry, so `流浪地球2` loses the `2`. Convert only Han
+characters yourself and append everything else verbatim.
+
+**Polyphones are the real risk.** The single-character table puts the most
+common reading first, which is wrong for many titles:
+
+| word | naive result | correct |
 |---|---|---|
-| `set_date_added.py` | **DONE, tested** | Rewrites `media_items.created_at` from `release_date`. Dry-run by default, `--apply` writes, auto `.bak`. sqlite default + `--backend mysql\|postgres`. |
-| `pinyin-sort-v4.2.8.patch` | **WRITTEN, NOT COMPILED** | Adds 拼音首字母排序 to OpenList's Emby DTOs. Verified to apply cleanly to pristine `v4.2.8`. |
-| `PINYIN-SORT-PATCH.md` | done | Full explanation + apply instructions for the patch. |
-| `README.md` | done | Usage for `set_date_added.py`. |
-| `pinyin_patch_validate.py` | done | Python port of the Go logic; 23 cases, all pass. |
-| `pinyin_sort_demo.py` | done | Before/after ordering demo. |
-| `chinese_search_reference.py` | **REFERENCE ONLY** | Working pinyin + t2s + fuzzy matcher, 16 cases pass. Not yet a Go patch. |
+| 重庆 | `ZQ` (zhòng) | `CQ` (chóng) |
+| 长城 | `ZC` (zhǎng) | `CC` (cháng) |
+| 乐器 | `LQ` (lè) | `YQ` (yuè) |
+| 银行 | `XH` (xíng) | `YH` (háng) |
 
----
+Fix with a curated phrase map, applied **longest-match-first** so `重庆森林` is
+not split as `重庆`+`森林`. Cover at least:
+重庆, 重庆森林, 长城, 长安, 长空, 长江, 长沙, 长春, 长大, 银行, 行长, 音乐,
+乐器, 乐谱, 乐章, 乐队, 快乐, 重新, 重复, 重量, 重要, 行为, 行业, 同行, 人参,
+曾经, 姓曾. Adding a phrase should be a one-line change.
 
-## 2. Your tasks, in priority order
+API note: use `pinyin.NewArgs()`, `pinyin.LazyPinyin(s, args)`,
+`pinyin.FirstLetter`. `LazyPinyin` force-sets `Heteronym=false`, so it does not
+panic on multi-reading characters; `Pinyin()`/`SinglePinyin()` with
+`Heteronym=true` can.
 
-### Task 1 — Compile and test the pinyin-sort patch (highest priority)
+### 3.3 Required test cases
 
-The previous session had **no Go toolchain and no root**, so the patch was never
-built. This is the only thing blocking it.
+SortName expectations:
 
-```bash
-git clone https://github.com/OpenListTeam/OpenList /tmp/OpenList
-cd /tmp/OpenList && git checkout v4.2.8
-git apply /path/to/openlist-emby/pinyin-sort-v4.2.8.patch
+```
+流浪地球→LLDQ   霸王别姬→BWBJ   杀手→SS      让子弹飞→RZDF
+我不是药神→WBSYS 大话西游→DHXY   无间道→WJD   唐人街探案→TRJTA
+战狼→ZL        长安十二时辰→CASESC  音乐之声→YYZS
+重庆森林→CQSL (not ZQSL)   重庆→CQ (not ZQ)   长城→CC (not ZC)
+长安→CA   银行→YH   乐器→YQ
+Alien→Alien   Dune→Dune   Interstellar→Interstellar   ""→""
+2001 A Space Odyssey→2001 A Space Odyssey  (must stay untouched)
+Dune 沙丘→DUNE SQ
+```
+
+Plus: ASCII input must not be inserted into the cache; cache hits must be stable;
+a mixed library must interleave (`Alien, 霸王别姬, 重庆森林, Dune, 流浪地球, 战狼`).
+
+### 3.4 Verification gate
+
+**Do not report this as working until it actually builds and the tests pass.**
+
+```
+git clone https://github.com/OpenListTeam/OpenList
+git checkout v4.2.8
+<apply your change>
 go get github.com/mozillazg/go-pinyin@latest && go mod tidy
 go build ./...
 go test ./server/handles/ -run 'Pinyin|SortName' -v
 ```
 
-Expected: build clean, all `TestEmbySortName` / `TestPinyinSortName*` /
-`TestPinyinSortOrder` pass.
+If no Go toolchain is available (the previous session had none and no root to
+install one), **say so explicitly** and hand over the diff with its verified
+status. Do not describe an uncompiled patch as working.
 
-If it does not compile, the likely causes in order:
-1. `go-pinyin` API drift — the code uses `pinyin.NewArgs()`,
-   `pinyin.LazyPinyin(s, args)`, `pinyin.FirstLetter`. Those are correct for
-   v0.20.x. Check `pinyin.Args` still has `Style`.
-2. `ForcedSortName` field name — confirm it exists in `embyItem` in `emby.go`.
-3. gofmt alignment inside the struct literals (cosmetic; `gofmt -w` fixes it).
+Also run `gofmt -l server/handles/` and fix formatting before delivering.
 
-Also run `gofmt -l server/handles/` and fix any formatting, then regenerate the
-patch so it is gofmt-clean.
+For OpenList `main` instead of v4.2.8: `seriesItem`/`albumItem` context has
+drifted slightly; `git apply --3way` merges it.
 
-### Task 2 — Port Chinese search to Go (if the user wants it)
+---
 
-`chinese_search_reference.py` is the validated spec. Port to Go as
-`server/handles/search_zh.go`, and swap the two `strings.Contains` sites:
+## 4. Deliverable C — 中文搜索增强 (only if the owner asks)
 
-- `filterEmbyItems()` (used by `/Items`, `/Users/{id}/Items`, `embyChildren`,
-  `embyLatest`)
-- `embySearchHints()` (`/Search/Hints`)
+Not started beyond a validated reference design. Port to Go as
+`server/handles/search_zh.go` and replace the two `strings.Contains` sites
+(`filterEmbyItems`, `embySearchHints`).
 
-Matching order that the tests require:
-1. plain lowercase substring (current behaviour, keep it first)
+Matching order, in this sequence:
+
+1. plain lowercase substring — **keep first**, it's current behaviour
 2. traditional↔simplified normalisation, **both directions**
-3. pinyin: full (`liulangdiqiu`) and initials (`lldq`), **strip spaces from the
-   query** so `liu lang` matches — this was a real bug caught in testing
-4. must NOT match: wrong initials (`ldlsw`), wrong polyphone reading (`zqsl`)
+   (`繁體` must match `繁体` and vice versa) — use `github.com/longbridgeapp/opencc`
+3. pinyin: full (`liulangdiqiu`) and initials (`lldq`)
+4. **strip spaces from the query** before comparing — `liu lang` must match
+   `liulangdiqiu`. This was a real bug found in testing.
 
-Add `github.com/longbridgeapp/opencc` for t2s. Reuse `pinyinPhrases` from
-`pinyin.go`. Keep the same 16-case table as a Go test.
+Reuse the phrase map from `pinyin.go`.
 
-### Task 3 — Open question the user never answered
+Must match: `流浪地球`✓, `liulang`✓, `lldq`✓, `流浪`✓, `liu lang`✓,
+`cqsl`→重庆森林✓, `繁体`→繁體✓, `繁體`→繁体✓, `殺手`→杀手✓.
+Must **not** match: `ldlsw`→流浪地球, `zqsl`→重庆森林, `zxcvbn`→流浪地球.
 
-Before the chat ended the user was asked whether pinyin sort should also apply
-to OpenList's **own web UI file browser** (not just Emby). They replied "as long
-as it can be done on openlist and emby client can accept it" — i.e. they care
-about the Emby path, and did not commit to the web UI. Confirm before doing it.
-
-If they do want it: `model.SortFiles` uses `github.com/maruel/natural`, whose
-`commonPrefix()` compares **bytes** (`ca := a[i]`), so it has the identical CJK
-bug. Needs a pinyin-aware comparator gated on `hasHan`.
-
-### Task 4 — Optional: the unfinished watch-state fixes
-
-Discovered but never fixed (user never asked for them; offer, don't assume):
-
-- Populate `MediaItem.Duration` during scan (ffprobe, or TMDB `runtime`), so the
-  90% auto-mark-watched actually fires.
-- Aggregate `UserData` for `seriesItem()` instead of hardcoding `&embyUserData{}`.
-- Cascade-delete `media_user_data` in `DeleteMediaItem` / `ClearMediaItems` /
-  `DeleteMediaItemsByIDs`.
+Scope decision to confirm with the owner: StrmAssistant defaults its search
+scope to `Movie, Collection, Series`. OpenList has no Collection equivalent
+(`/Collections` returns an empty list), so decide whether music/albums are
+included.
 
 ---
 
-## 3. Hard-won details — do not lose these
+## 5. Open questions — ask, don't assume
 
-**Timestamp format for sqlite.** OpenList's driver is `glebarez/sqlite`, which
-parses with `parseTimeFormats[0] = "2006-01-02 15:04:05.999999999-07:00"` and
-writes with the same. `set_date_added.py` emits exactly
-`"%Y-%m-%d %H:%M:%S+00:00"` to match. Do not change it to ISO `T` form.
-
-**Store noon, not midnight.** `embyTimeStr()` formats with `.UTC()`, so a
-midnight timestamp can slip back one calendar day for negative UTC offsets.
-Noon can never cross a day boundary anywhere. `set_date_added.py --time`
-defaults to `12:00:00` for this reason.
-
-**Never touch `updated_at`.** OpenList uses it for Subsonic's `Starred` field.
-Also note MySQL evaluates `SET` clauses left-to-right, so
-`SET created_at=?, updated_at=created_at` would copy the *new* value — the MySQL
-backend deliberately only sets `created_at`.
-
-**`go-pinyin` drops unknown runes.** `Pinyin()` only appends a rune if it has a
-dictionary entry, so `流浪地球2` would lose the `2`. `pinyin.go` only converts
-Han characters and appends the rest verbatim.
-
-**Polyphones are the actual risk.** The single-char table puts the most common
-reading first: `重庆` → `ZQ` (zhòng, wrong), `长城` → `ZC` (zhǎng, wrong),
-`乐器` → `LQ` (lè, wrong). `pinyinPhrases` in `pinyin.go` overrides ~25
-high-frequency film/music words, **longest-match-first** so `重庆森林` is not
-split as `重庆`+`森林`.
-
-**TV episodes have no release date.** `PremiereDate` is emitted only for movies
-(`movieItem`). Episodes inherit the single merged show record's `DateCreated`.
-Running `set_date_added.py` on TV stamps every episode with the show's release
-date — harmless, in-series order comes from `ParentIndexNumber`/`IndexNumber`,
-but say so before the user runs it.
-
-**Mixed EN/CN sorting.** Without the patch, every ASCII title sorts before every
-CJK one (ASCII codepoints are lower), so all Chinese films land after all
-English ones. That is the symptom users notice most.
-
-**The user's DB.** sqlite by default at `<data-dir>/data.db`, table prefix `x_`
-(configurable). Docker data volume is `/opt/openlist/data/`. If they run MySQL,
-`set_date_added.py --backend mysql --dsn ...` exists.
+1. **Web UI sorting.** Should pinyin sort also cover OpenList's own web file
+   browser, not just Emby? The owner said "as long as it can be done on openlist
+   and emby client can accept it", which is ambiguous — it could mean "Emby path
+   is enough" or "the whole of OpenList". **Confirm before doing it.** If yes:
+   `model.SortFiles` uses `github.com/maruel/natural`, whose `commonPrefix()`
+   compares **bytes** (`ca := a[i]`), so it has the identical CJK bug and needs a
+   pinyin-aware comparator gated on `hasHan`.
+2. **Search scope** — movies+series only, or music too? (§4)
+3. **Watch-state fixes** — never requested, only discovered. Offer, don't
+   implement unsolicited: populate `Duration` at scan time (ffprobe, or TMDB
+   `runtime`), aggregate series-level `UserData`, cascade-delete
+   `media_user_data`.
+4. **Upstream or local?** No pinyin/中文搜索 issue exists on OpenList (checked),
+   so there's no maintainer momentum to ride. Ask whether they want a PR to
+   `OpenListTeam/OpenList` or just a local build.
 
 ---
 
-## 4. Working rules
+## 6. Working rules
 
-- The user's fork is this repo (`yhchong2014/teldrive`). Artifacts belong in
-  `openlist-emby/`. Do not touch `docs/` — that is an Astro site.
-- Do not modify Teldrive's Go code for any of this; these are OpenList-side
-  changes plus standalone scripts.
-- Where the code supports it, **always test rather than assert**. The previous
-  session's Python ports caught three real bugs (`liu lang` not matching,
-  `乐器` reading, and a wrong test expectation for `十二` = S+E).
-- Be explicit about verification status. Never describe the patch as "working"
-  until `go build` + `go test` have actually run.
-- If the user asks "does X work in OpenList", check the source before answering.
-  Several intuitions were wrong (e.g. pinyin sort looked like it should work via
-  `ForcedSortName`, but OpenList never sets it).
+- **No code in this repo.** Deliver code in chat or keep it in `/tmp`.
+- Never modify Teldrive's Go code for any of this — these are OpenList-side
+  changes plus a standalone DB script.
+- **Test rather than assert.** The previous session's reference ports caught
+  three real bugs (`liu lang` not matching; `乐器` reading as lè not yuè; a wrong
+  test expectation where `十二` = S+E, not just `十二`→`SE`). Expect the same
+  class of bug in a Go port.
+- Verify claims about OpenList against source before answering. Several
+  intuitions were wrong, e.g. pinyin sort looked achievable via `ForcedSortName`
+  alone, but OpenList never sets that field at all.
+- Match the owner's pace: they ask short, direct questions and want short,
+  direct answers with the finding stated up front.
 
 ---
 
-## 5. Quick verification commands
+## 7. Where to look in the OpenList source
 
-```bash
-# date script still sane
-python3 openlist-emby/set_date_added.py --help
-python3 openlist-emby/pinyin_patch_validate.py    # 23 cases, ALL PASS
-python3 openlist-emby/pinyin_sort_demo.py         # before/after ordering
-python3 openlist-emby/chinese_search_reference.py # 16 cases, ALL PASS
-# requires: pip install pypinyin
-
-# patch applies to pristine v4.2.8
-git clone --depth 1 -b v4.2.8 https://github.com/OpenListTeam/OpenList /tmp/v
-cd /tmp/v && git apply --check /path/to/openlist-emby/pinyin-sort-v4.2.8.patch
+```
+server/handles/emby.go            DTO structs (embyItem, embyUserData), routing,
+                                  embyTimeStr, embyTicks, auth, users
+server/handles/emby_browse.go     the 4 DTO constructors, sortEmbyItems,
+                                  filterEmbyItems, embySearchHints, library build
+server/handles/emby_play.go       playbackinfo, progress, played/favorite
+server/handles/media_user.go      web-UI progress/favorites/resume
+server/handles/media_gate.go      MediaItemFilePath, access checks, signed links
+internal/model/media.go           MediaItem, EpisodeInfo
+internal/model/media_extra.go     MediaUserData, EmbyDevice
+internal/db/media.go              CreateOrUpdateMediaItem, Delete/Clear
+internal/conf/const.go            media_* settings keys
+internal/bootstrap/data/setting.go  setting defaults + help text
+internal/search/bleve/            OpenList's own VFS index
+internal/model/obj.go             SortFiles (natural.Less — byte compare)
 ```
