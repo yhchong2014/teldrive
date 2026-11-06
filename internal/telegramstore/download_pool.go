@@ -75,6 +75,7 @@ type DownloadClientPool struct {
 	leaser      AccountLeaser
 	config      DownloadClientPoolConfig
 	globalCache cache.Cacher
+	seekCache   *seekChunkCache
 	ctx         context.Context
 	cancel      context.CancelFunc
 
@@ -117,7 +118,7 @@ func NewDownloadClientPool(leaser AccountLeaser, config DownloadClientPoolConfig
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	pool := &DownloadClientPool{
-		leaser: leaser, config: config, globalCache: c, ctx: ctx, cancel: cancel,
+		leaser: leaser, config: config, globalCache: c, seekCache: newSeekChunkCache(16*1024*1024, 30*time.Second), ctx: ctx, cancel: cancel,
 		entries: make(map[downloadClientKey]*downloadClientEntry), done: make(chan struct{}),
 	}
 	go pool.reap()
@@ -237,13 +238,14 @@ func (p *DownloadClientPool) openDownloadSessionMulti(ctx context.Context, userI
 	}
 	initial := ready[0]
 	return &gotdDownloadSession{
-		clients: []sessionClient{{api: initial.api, clientID: initial.clientID}},
+		clients:              []sessionClient{{api: initial.api, clientID: initial.clientID}},
 		clientID:             initial.clientID,
 		clientSource:         clients.wait,
 		closeFn:              clients.Close,
 		downloadReadBuffers:  p.config.ReadBuffers,
 		downloadReadParallel: p.config.ReadParallel,
 		globalCache:          p.globalCache,
+		seekCache:            p.seekCache,
 		stats:                newStreamStats(),
 	}, nil
 }
