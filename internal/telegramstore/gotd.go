@@ -31,6 +31,7 @@ const (
 	defaultTelegramReadTimeout          = 30 * time.Second
 	defaultTelegramReadAttempts         = 3
 	defaultTelegramReadFailoverAccounts = 2
+	seekHedgeDelay                      = 1500 * time.Millisecond
 	deleteBatchSize                     = 100
 )
 
@@ -55,6 +56,7 @@ type GotdStorage struct {
 	downloadReadParallel int
 	globalCache          cache.Cacher
 	thumbnailSlots       chan struct{}
+	seekCache            *seekChunkCache
 }
 
 type GotdStorageOption func(*GotdStorage)
@@ -84,7 +86,7 @@ func WithDownloadReadParallel(parallel int) GotdStorageOption {
 }
 
 func NewGotdStorage(runner Runner, c cache.Cacher, options ...GotdStorageOption) *GotdStorage {
-	storage := &GotdStorage{runner: runner, globalCache: c, downloadReadBuffers: defaultTelegramReadBuffers, downloadReadParallel: defaultTelegramReadParallel, thumbnailSlots: make(chan struct{}, 4)}
+	storage := &GotdStorage{runner: runner, globalCache: c, downloadReadBuffers: defaultTelegramReadBuffers, downloadReadParallel: defaultTelegramReadParallel, thumbnailSlots: make(chan struct{}, 4), seekCache: newSeekChunkCache(16*1024*1024, 30*time.Second)}
 	for _, option := range options {
 		if option != nil {
 			option(storage)
@@ -171,6 +173,7 @@ func (s *GotdStorage) OpenRange(ctx context.Context, request RangeRequest) (io.R
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
 	reader := newTelegramRangeReader(streamCtx, cancel, s.downloadReadBuffers, s.downloadReadParallel, s.globalCache)
+	reader.seekCache = s.seekCache
 	go func() {
 		err := runWithConnections(streamCtx, s.runner, request.UserID, OperationDownload, s.downloadReadParallel, func(runCtx context.Context, api *tg.Client) error {
 			clientID, _ := ClientID(runCtx)
@@ -279,6 +282,7 @@ type gotdDownloadSession struct {
 	clients              []sessionClient
 
 	globalCache cache.Cacher
+	seekCache   *seekChunkCache
 	stats       *streamStats
 }
 
@@ -334,6 +338,7 @@ func (s *GotdStorage) OpenDownloadSession(ctx context.Context, userID int64) (Do
 		downloadReadBuffers:  s.downloadReadBuffers,
 		downloadReadParallel: s.downloadReadParallel,
 		globalCache:          s.globalCache,
+		seekCache:            s.seekCache,
 		stats:                newStreamStats(),
 	}
 	go func() {
@@ -391,6 +396,7 @@ func (s *gotdDownloadSession) OpenRange(ctx context.Context, request RangeReques
 	streamCtx, cancel := context.WithCancel(ctx)
 	reader := newTelegramRangeReader(streamCtx, cancel, s.downloadReadBuffers, s.downloadReadParallel, s.globalCache)
 	reader.stats = s.stats
+	reader.seekCache = s.seekCache
 	go func() {
 		location, size, locationErr := fetchDocumentLocation(WithClientID(streamCtx, primary.clientID), primary.api, request.ChannelID, request.MessageID, s.globalCache)
 		if locationErr != nil {
@@ -491,6 +497,7 @@ type telegramRangeReader struct {
 	timeout    time.Duration
 	attempts   int
 	cache      cache.Cacher
+	seekCache  *seekChunkCache
 	stats      *streamStats
 }
 
@@ -623,8 +630,13 @@ func (r *telegramRangeReader) fillWithClientSource(ctx context.Context, source r
 	var nextSeq int64
 	var emitSeq int64
 	active := 0
+	hedgeReserved := false
+	fetchSlots := make(chan struct{}, r.parallel)
 	var launchErr error
 	launchNext := func() bool {
+		if hedgeReserved && emitSeq == 0 && active >= r.parallel-1 {
+			return false
+		}
 		if nextRemaining <= 0 || nextSeq-emitSeq >= int64(r.parallel) || launchErr != nil {
 			return false
 		}
@@ -646,10 +658,50 @@ func (r *telegramRangeReader) fillWithClientSource(ctx context.Context, source r
 		// Rotate planned chunks over accounts that are ready now. Cold accounts
 		// join subsequent chunks as soon as their pooled clients become ready.
 		client := clients[seq%int64(len(clients))]
+		// Only the first chunk after a non-zero range request is latency
+		// critical. Race it against one already-ready alternate account after a
+		// short delay; ordinary reads keep their existing concurrency behavior.
+		var alternate rangeClient
+		if request.Offset > 0 && seq == 0 && r.parallel > 1 && client.clientID > 0 {
+			for _, candidate := range clients {
+				if candidate.api != nil && candidate.clientID > 0 && candidate.clientID != client.clientID {
+					alternate = candidate
+					hedgeReserved = true
+					break
+				}
+			}
+		}
 		go func() {
-			payload, accountID, elapsed, err := r.fetchPlan(fetchCtx, source, primaryClient, primary, request, plan, client)
+			fetch := func(ctx context.Context, selected rangeClient, candidates rangeClientSource) seekFetchResult {
+				if primary != nil {
+					key := seekChunkKey{userID: request.UserID, channelID: request.ChannelID, messageID: request.MessageID,
+						documentID: primary.ID, accessHash: primary.AccessHash, offset: plan.offset, limit: plan.limit}
+					if data, ok := r.seekCache.get(key); ok && len(data) >= plan.skip+plan.length {
+						return seekFetchResult{payload: data[plan.skip : plan.skip+plan.length], cached: true}
+					}
+				}
+				select {
+				case fetchSlots <- struct{}{}:
+					defer func() { <-fetchSlots }()
+				case <-ctx.Done():
+					return seekFetchResult{err: ctx.Err()}
+				}
+				payload, accountID, elapsed, err := r.fetchPlan(ctx, candidates, primaryClient, primary, request, plan, selected)
+				return seekFetchResult{payload: payload, accountID: accountID, elapsed: elapsed, err: err}
+			}
+			var resultData seekFetchResult
+			if alternate.api != nil {
+				resultData = raceSeekFetch(fetchCtx, seekHedgeDelay,
+					func(ctx context.Context) seekFetchResult { return fetch(ctx, client, source) },
+					func(ctx context.Context) seekFetchResult {
+						return fetch(ctx, alternate, fixedRangeClientSource([]rangeClient{alternate}))
+					})
+			} else {
+				resultData = fetch(fetchCtx, client, source)
+			}
+			payload, accountID, elapsed, err := resultData.payload, resultData.accountID, resultData.elapsed, resultData.err
 			result := readResult{seq: seq, payload: payload, err: err}
-			if err == nil {
+			if err == nil && !resultData.cached {
 				r.stats.record(accountID, int64(len(payload)), elapsed)
 				if slog.Default().Enabled(ctx, slog.LevelDebug) {
 					slog.DebugContext(ctx, "telegram.download_chunk",
@@ -763,6 +815,8 @@ func (r *telegramRangeReader) fetchPlan(ctx context.Context, source rangeClientS
 
 func (r *telegramRangeReader) fetchPlanFromClient(ctx context.Context, client rangeClient, location *tg.InputDocumentFileLocation, request RangeRequest, plan telegramReadPlan) ([]byte, error) {
 	clientCtx := WithClientID(ctx, client.clientID)
+	key := seekChunkKey{userID: request.UserID, channelID: request.ChannelID, messageID: request.MessageID,
+		documentID: location.ID, accessHash: location.AccessHash, offset: plan.offset, limit: plan.limit}
 	download := func(callCtx context.Context, loc *tg.InputDocumentFileLocation) (tg.UploadFileClass, error) {
 		return client.api.UploadGetFile(callCtx, &tg.UploadGetFileRequest{
 			Location: loc,
@@ -808,6 +862,13 @@ func (r *telegramRangeReader) fetchPlanFromClient(ctx context.Context, client ra
 	end := plan.skip + plan.length
 	if len(file.Bytes) < end {
 		return nil, fmt.Errorf("download Telegram document chunk for account %d at %d: %w", client.clientID, plan.offset, io.ErrUnexpectedEOF)
+	}
+	// Keep the full response so subsequent seeks with a different skip can reuse
+	// the aligned Telegram chunk. Cache only complete requested chunks.
+	if len(file.Bytes) == plan.limit && location.ID != 0 {
+		// A refreshed reference may point to a replaced document.
+		key.documentID, key.accessHash = location.ID, location.AccessHash
+		r.seekCache.put(key, file.Bytes)
 	}
 	return file.Bytes[plan.skip:end], nil
 }
